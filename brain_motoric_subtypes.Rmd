@@ -1,0 +1,486 @@
+---
+title: Motoric Delirium Subtypes vs Discharge & Long-Term Outcomes
+author: 'Jennifer Thompson, MPH; Supervisor: Rameela Chandrasekhar, PhD'
+date: '`r format(Sys.time(), "%B %d %Y")`'
+output:
+  html_notebook:
+    code_folding: hide
+    toc: yes
+    toc_depth: 4
+    toc_float: yes
+  html_document:
+    toc: yes
+    toc_depth: 2
+    toc_float: yes
+  pdf_document:
+    toc: yes
+    toc_depth: 2
+abstract: We describe the prevalence of both hypoactive and hyperactive delirium in the BRAIN-ICU
+  cohort, then investigate the association of both of these motoric subtypes with discharge location,
+  mortality, and long-term cognition.
+---
+
+```{r knitr_setup, echo = FALSE, message = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, results='hide')
+options(width = 200)
+```
+
+```{r general_setup}
+library(tidyverse)
+library(pander)
+library(rms)
+library(mice)
+
+options(grType = 'plotly')
+
+## Spacing for pandoc tables
+space.3 <- paste(rep("&nbsp;", 3), collapse = '')
+space.6 <- paste(rep("&nbsp;", 6), collapse = '')
+
+## -- Set up figure, table numbering using the captioner package -----------------------------------
+library(captioner)
+table_nums <- captioner(prefix = 'Table')
+figure_nums <- captioner(prefix = 'Figure')
+
+table_nums(name = 'describe_byasmt', caption = 'Status and Motoric Subtypes by Assessment')
+table_nums(name = 'describe_byday', caption = 'Status and Motoric Subtypes by Patient-Day')
+table_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
+
+figure_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
+
+```
+
+```{r combinedata}
+## Eventually, this chunk will combine VA and non-VA data into all.oneobs, all.assess, all.fu. For
+## maximum efficiency, it currently just keeps necessary variables from BRAIN data and renames those
+## data sets to the names which will be used eventually.
+
+## If working with VA data
+if(Sys.info()['sysname'] == 'Windows'){
+  load('braindata.Rdata')
+  load('minddata.Rdata')
+  
+  ## Change variable names in each data set so that they can be combined
+  ## All death variables are "died.mind.30", eg; change to "died.ever.30"
+  names(mind.oneobs) <- gsub('mind', 'ever', names(mind.oneobs))
+  names(brain.oneobs) <- gsub('brain', 'ever', names(brain.oneobs))
+  
+  ## Remove "new" from all opioid vars in BRAIN; MIND only used new conversion, only has one set
+  names(brain.oneobs) <- gsub('\\.new', '', names(brain.oneobs))
+  names(brain.daily) <- gsub('\\.new', '', names(brain.daily))
+  
+  ## Variables to keep: intersection of variables in two data sets
+  keep.oneobs <- intersect(names(brain.oneobs), names(mind.oneobs))
+  keep.daily <- intersect(names(brain.daily), names(mind.daily))
+  keep.fu <- intersect(names(brain.fu), names(mind.fu))
+  
+  ## Combine data sets
+  all.oneobs <- rbind(brain.oneobs[,keep.oneobs], mind.oneobs[,keep.oneobs])
+  all.daily <- rbind(brain.daily[,keep.daily], mind.daily[,keep.daily])
+  all.assess <- rbind(brain.assess, mind.assess)
+  all.fu <- rbind(brain.fu[,keep.fu], mind.fu[,keep.fu])
+
+## If using only BRAIN data  
+} else{
+  ## Home directory (if on Mac, assumes connected to desktop via Samba)
+  if(Sys.info()['sysname'] == 'Darwin'){
+    home.dir <- '/Volumes'
+  } else{
+    home.dir <- '/home'
+  }
+
+  load(file.path(home.dir, 'thomps23', 'ICUDelirium', 'BRAINICU', 'braindata.Rdata'))
+  
+  ## -- Change variable names in BRAIN data sets to combine with MIND ------------------------------
+  ## brain.oneobs: all death variables are "died.brain.30", eg; change to "died.ever.30"
+  names(brain.oneobs) <- gsub('brain', 'ever', names(brain.oneobs))
+  
+  ## Remove "new" from all opioid variables; MIND only used new conversion, only has one set
+  names(brain.oneobs) <- gsub('\\.new', '', names(brain.oneobs))
+  names(brain.daily) <- gsub('\\.new', '', names(brain.daily))
+  
+  all.oneobs <- brain.oneobs
+  all.daily <- brain.daily
+  all.assess <- brain.assess
+  all.fu <- brain.fu
+}
+
+```
+
+# Primary Exposure: Motoric Subtypes of Delirium
+Most of the variables included in these analyses have been documented or discussed elsewhere. The
+exposure variables specific to this analysis are hypo- and hyperactive delirium, generally referred
+to as motoric subtypes.
+
+For any given CAM/RASS assessment, a patient was considered to have hypoactive delirium if he or she
+was CAM+ and had a RASS <= 0. A patient was considered to have hyperactive delirium if he or she was
+CAM+ but had a RASS > 0. A day could have both hypoactive and hyperactive delirium assessments, if
+the patient was in the ICU and was delirious at both research staff assessments.
+
+## Handling Missingness
+If patient-day had no mental status assessment on an in-hospital study day, we originally used
+single imputation to impute an overall status (normal, delirious or comatose), based on the status
+on the days immediately prior to and after the missing day. If a missing study day was assigned a
+normal or comatose status during single imputation, we assumed no hypoactive or hyperactive
+delirium. For days which were assigned a delirious status, we imputed indicators for whether
+delirium was hypoactive or hyperactive based on overall mental status, coma, and motoric subtypes on
+the days immediately prior to and after the missing day.
+
+```{r datamgmt_subtypes}
+## -- Determine whether pt had hypoactive or hyperactive delirium at each single *assessment* ------
+all.assess <- all.assess %>%
+  left_join(select(all.daily, id, study.date, study.day),
+            by = c('id' = 'id', 'asmt.date' = 'study.date')) %>%
+  mutate(mental.stat.motoric = factor(ifelse(is.na(mental.stat), NA,
+                                      ifelse(mental.stat == 'Normal', 1,
+                                      ifelse(mental.stat == 'Delirious' &
+                                               is.na(rass.daily) | !(rass.daily %in% -5:4), 2,
+                                      ifelse(mental.stat == 'Delirious' & rass.daily <= 0, 3,
+                                      ifelse(mental.stat == 'Delirious' & rass.daily > 0, 4,
+                                      ifelse(mental.stat == 'Comatose', 5, NA)))))),
+                                      levels = 1:5,
+                                      labels = c('Normal', 'Delirium, no RASS',
+                                                 'Hypoactive delirium', 'Hyperactive delirium',
+                                                 'Coma')))
+
+## -- Determine how much hypoactive/hyperactive delirium pt had on each study *day* ----------------
+motoric.byday <- all.assess %>%
+  group_by(id, study.day) %>%
+  summarise(n.asmts = sum(!is.na(mental.stat.motoric)),
+            normal.asmts = sum(mental.stat.motoric == 'Normal', na.rm = TRUE),
+            hypo.del.asmts = sum(mental.stat.motoric == 'Hypoactive delirium', na.rm = TRUE),
+            hyper.del.asmts = sum(mental.stat.motoric == 'Hyperactive delirium', na.rm = TRUE),
+            coma.asmts = sum(mental.stat.motoric == 'Coma', na.rm = TRUE)) %>%
+  mutate(mental.stat.subtype = factor(ifelse(n.asmts == 0, NA,
+                                      ifelse(hypo.del.asmts > 0 & hyper.del.asmts > 0, 3,
+                                      ifelse(hypo.del.asmts > 0, 4,
+                                      ifelse(hyper.del.asmts > 0, 2,
+                                      ifelse(coma.asmts > 0, 5,
+                                      ifelse(normal.asmts > 0, 1, NA)))))),
+                                      levels = 1:5,
+                                      labels = c('No delirium or coma',
+                                                 'Hyperactive delirium',
+                                                 'Both hypo- and hyperactive delirium',
+                                                 'Hypoactive delirium',
+                                                 'No delirium; had coma')))
+
+## Add daily subtypes back onto main daily data set
+all.daily <- all.daily %>%
+  left_join(select(motoric.byday, id, study.day, mental.stat.subtype),
+            by = c('id', 'study.day'))
+
+## -- Impute mental status incorporating subtypes for days with no assessment which were -----------
+## -- assigned delirium in original single imputation ----------------------------------------------
+subtype.impdata <- all.daily %>%
+  select(id, study.day, mental.stat.imp, mental.stat.subtype, stat.before.imp, stat.after.imp,
+         coma.today) %>%
+  group_by(id) %>%
+  ## Create variables for mental status + subtypes, coma yesterday and tomorrow
+  mutate(mental.subtype.yday = lag(mental.stat.subtype),
+         mental.subtype.tmw = lead(mental.stat.subtype),
+         coma.yday = lag(coma.today),
+         coma.tmw = lead(coma.today),
+         ## Initialize imputed version of mental status + subtypes, incorporating normal/coma
+         ## imputation from original data set
+         del.subtype = factor(ifelse(!is.na(mental.stat.subtype), as.character(mental.stat.subtype),
+                                     NA))) %>%
+  ungroup() %>%
+  ## Restrict to only delirium days; otherwise delirium days might get imputed as normal or coma
+  filter(mental.stat.imp == 'Delirious') %>%
+  ## Some variables need to be refactored - original factor levels (Deceased, Discharged,
+  ## Withdrawn) don't show up in this data set and cause errors in imputation
+  select(-mental.stat.subtype, -mental.stat.imp) %>%
+  mutate(stat.before.imp = factor(as.character(stat.before.imp)),
+         coma.today = factor(as.character(coma.today)),
+         coma.yday = factor(as.character(coma.yday)),
+         coma.tmw = factor(as.character(coma.tmw)),
+         del.subtype = factor(as.character(del.subtype)))
+
+## predictorMatrix for mice(): uses all covariates except ID for motoric subtype variable, none
+## for all others
+impdata.cols <- ncol(subtype.impdata)
+subtype.predmatrix <- matrix(c(rep(0, impdata.cols*(impdata.cols - 1)),
+                               c(0, rep(1, impdata.cols - 1))),
+                             byrow = TRUE, ncol = impdata.cols)
+
+## Perform single imputation (only one imputation) and get complete data set
+subtype.mice <- mice(subtype.impdata, m = 1, predictorMatrix = subtype.predmatrix, seed = 56)
+subtype.mice.complete <- complete(subtype.mice)
+
+## Create final version of imputed mental status + subtype, and create indicators for whether
+## patient had hypoactive and hyperactive delirium each day
+all.daily <- all.daily %>%
+  left_join(select(subtype.mice.complete, id, study.day, del.subtype),
+            by = c('id', 'study.day')) %>%
+  mutate(mental.stat.subtype.imp =
+           factor(ifelse(is.na(mental.stat.imp), NA,
+                  ifelse(mental.stat.imp == 'Normal', 1,
+                  ifelse(mental.stat.imp == 'Comatose', 5,
+                  ifelse(!is.na(del.subtype) & del.subtype == 'Hyperactive delirium', 2,
+                  ifelse(!is.na(del.subtype) & del.subtype == 'Both hypo- and hyperactive delirium',
+                         3,
+                  ifelse(!is.na(del.subtype) & del.subtype == 'Hypoactive delirium', 4, NA)))))),
+                  levels = 1:5,
+                  labels = levels(all.daily$mental.stat.subtype)),
+         hypo.del.today = factor(ifelse(is.na(mental.stat.subtype), NA,
+                                 ifelse(mental.stat.subtype %in%
+                                          c('Both hypo- and hyperactive delirium',
+                                            'Hypoactive delirium'), 1, 0)),
+                                 levels = 0:1, labels = c('No', 'Yes')),
+         hypo.del.imp = factor(ifelse(is.na(mental.stat.subtype.imp), NA,
+                               ifelse(mental.stat.subtype.imp %in%
+                                        c('Both hypo- and hyperactive delirium',
+                                          'Hypoactive delirium'), 1, 0)),
+                               levels = 0:1, labels = c('No', 'Yes')),
+         hyper.del.today = factor(ifelse(is.na(mental.stat.subtype), NA,
+                                  ifelse(mental.stat.subtype %in%
+                                           c('Both hypo- and hyperactive delirium',
+                                             'Hyperactive delirium'), 1, 0)),
+                                  levels = 0:1, labels = c('No', 'Yes')),
+         hyper.del.imp = factor(ifelse(is.na(mental.stat.subtype.imp), NA,
+                                ifelse(mental.stat.subtype.imp %in%
+                                         c('Both hypo- and hyperactive delirium',
+                                           'Hyperactive delirium'), 1, 0)),
+                                levels = 0:1, labels = c('No', 'Yes')))
+
+## Data set with only in-hospital days
+all.daily.hosp <- filter(all.daily, !is.na(mental.stat.imp))
+
+```
+
+## Detailed Description of Motoric Subtypes
+`r table_nums('describe_byasmt', display = 'cite')` - `r table_nums('describe_bypt', display = 'cite')` describe mental status and motoric subtypes by individual assessment, patient-days, and
+by patient. `r figure_nums('describe_bypt', display = 'cite')` shows a visual representation of
+durations of each mental status type or subtype.
+
+```{r describe_subtypes_asmt}
+## -- Table for all *assessments* ------------------------------------------------------------------
+## How many assessments were complete (had non-missing overall CAM + RASS)?
+complete.assess <- subset(all.assess, !is.na(rass.daily) & !is.na(cam.daily))
+n.complete.assess <- nrow(complete.assess)
+
+## Get Ns for each status/subtype, and within each subtype, for each RASS
+n.assess.subtype <- table(complete.assess$mental.stat.motoric)
+## Add overall delirium
+n.assess.subtype <- c(n.assess.subtype,
+                      'Delirium' = sum(n.assess.subtype[c('Hypoactive delirium',
+                                                          'Hyperactive delirium')]))
+n.rass.hypo <-
+  with(subset(complete.assess, mental.stat.motoric == 'Hypoactive delirium'), table(rass.daily))
+n.rass.hyper <-
+  with(subset(complete.assess, mental.stat.motoric == 'Hyperactive delirium'), table(rass.daily))
+
+## Calculate percentages
+pct.assess.subtype <- round((n.assess.subtype / n.complete.assess)*100)
+pct.del.subtype <- round((n.assess.subtype[c('Hypoactive delirium', 'Hyperactive delirium')] /
+                            n.assess.subtype['Delirium'])*100)
+pct.rass.hypo <- round((n.rass.hypo / n.assess.subtype['Hypoactive delirium'])*100)
+pct.rass.hyper <- round((n.rass.hyper / n.assess.subtype['Hyperactive delirium'])*100)
+
+## Create table
+describe.asmts <- data.frame(rowlabel = c('Total number of assessments',
+                                          '',
+                                          'Normal (CAM-, RASS > -4)',
+                                          'Comatose (RASS -4/-5)',
+                                          'Delirious (CAM+, RASS > -4)',
+                                          paste0(space.3, 'Hypoactive'),
+                                          paste0(space.6, 'RASS -3'),
+                                          paste0(space.6, 'RASS -2'),
+                                          paste0(space.6, 'RASS -1'),
+                                          paste0(space.6, 'RASS 0'),
+                                          paste0(space.3, 'Hyperactive'),
+                                          paste0(space.6, 'RASS +1'),
+                                          paste0(space.6, 'RASS +2'),
+                                          paste0(space.6, 'RASS +3'),
+                                          paste0(space.6, 'RASS +4')),
+                             ncat = c(n.complete.assess,
+                                      NA,
+                                      n.assess.subtype['Normal'],
+                                      n.assess.subtype['Coma'],
+                                      n.assess.subtype['Delirium'],
+                                      n.assess.subtype['Hypoactive delirium'],
+                                      n.rass.hypo['-3'],
+                                      n.rass.hypo['-2'],
+                                      n.rass.hypo['-1'],
+                                      n.rass.hypo['0'],
+                                      n.assess.subtype['Hyperactive delirium'],
+                                      n.rass.hyper['1'],
+                                      n.rass.hyper['2'],
+                                      n.rass.hyper['3'],
+                                      n.rass.hyper['4']),
+                             pctcat = c(100,
+                                        NA,
+                                        pct.assess.subtype['Normal'],
+                                        pct.assess.subtype['Coma'],
+                                        pct.assess.subtype['Delirium'],
+                                        pct.assess.subtype['Hypoactive delirium'],
+                                        pct.rass.hypo['-3'],
+                                        pct.rass.hypo['-2'],
+                                        pct.rass.hypo['-1'],
+                                        pct.rass.hypo['0'],
+                                        pct.assess.subtype['Hyperactive delirium'],
+                                        pct.rass.hyper['1'],
+                                        pct.rass.hyper['2'],
+                                        pct.rass.hyper['3'],
+                                        pct.rass.hyper['4']))
+describe.asmts$npct <- with(describe.asmts, {
+  ifelse(rowlabel == 'Total number of assessments', format(ncat, big.mark = ','),
+  ifelse(rowlabel == '', '',
+  ifelse(!(rowlabel %in% c(paste0(space.3, 'Hypoactive'), paste0(space.3, 'Hyperactive'))),
+         paste0(pctcat, '% (', ncat, ')'),
+  ifelse(rowlabel == paste0(space.3, 'Hypoactive'),
+         paste0(pctcat, '% of all; ',
+                pct.del.subtype['Hypoactive delirium'], '% of delirious (', ncat, ')'),
+         paste0(pctcat, '% of all; ',
+                pct.del.subtype['Hyperactive delirium'], '% of delirious (', ncat, ')'))))) })
+
+## Formatting and caption
+rownames(describe.asmts) <- NULL
+describe.asmts <- subset(describe.asmts, select = c(rowlabel, npct))
+names(describe.asmts) <- c('Assessment Type', '% (N)')
+
+```
+
+#### `r table_nums('describe_byasmt')`
+```{r print_desc_assess, results = 'asis'}
+pandoc.table(describe.asmts, justify = c('left', 'right'), split.cells = 100)
+
+```
+
+```{r describe_subtypes_days}
+## -- Table for all *patient-days* -----------------------------------------------------------------
+## Table will have columns for original data and post-imputation data; get number of in-hospital
+##  days, number of days with complete assessment
+n.hosp.days <- nrow(all.daily.hosp)
+n.days.asmt <- nrow(subset(all.daily.hosp, !is.na(mental.stat)))
+
+subtypes.by.day <- all.daily.hosp %>%
+  summarise(n.days_org = n.days.asmt,
+            n.days_imp = n.hosp.days,
+            n.del_org = sum(mental.stat == 'Delirious', na.rm = TRUE),
+            n.coma_org = sum(coma.today == 'Coma', na.rm = TRUE),
+            n.norm_org = sum(mental.stat == 'Normal', na.rm = TRUE),
+            n.anyhypo_org = sum(hypo.del.today == 'Yes', na.rm = TRUE),
+            n.anyhyper_org = sum(hyper.del.today == 'Yes', na.rm = TRUE),
+            n.onlyhypo_org = sum(mental.stat.subtype == 'Hypoactive delirium', na.rm = TRUE),
+            n.onlyhyper_org = sum(mental.stat.subtype == 'Hyperactive delirium', na.rm = TRUE),
+            n.bothsubtypes_org =
+              sum(mental.stat.subtype == 'Both hypo- and hyperactive delirium', na.rm = TRUE),
+            n.del_imp = sum(mental.stat.imp == 'Delirious', na.rm = TRUE),
+            n.coma_imp = sum(coma.today.imp == 'Coma', na.rm = TRUE),
+            n.norm_imp = sum(mental.stat.imp == 'Normal', na.rm = TRUE),
+            n.anyhypo_imp = sum(hypo.del.imp == 'Yes', na.rm = TRUE),
+            n.anyhyper_imp = sum(hyper.del.imp == 'Yes', na.rm = TRUE),
+            n.onlyhypo_imp = sum(mental.stat.subtype.imp == 'Hypoactive delirium', na.rm = TRUE),
+            n.onlyhyper_imp = sum(mental.stat.subtype.imp == 'Hyperactive delirium', na.rm = TRUE),
+            n.bothsubtypes_imp =
+              sum(mental.stat.subtype.imp == 'Both hypo- and hyperactive delirium',
+                  na.rm = TRUE)) %>%
+  gather(key = subtype, value = nsub) %>%
+  separate(subtype, into = c('subtype', 'cohort'), sep = '_') %>%
+  mutate(denom.del = ifelse(subtype %in% c('n.coma', 'n.del', 'n.norm'), NA,
+                     ifelse(cohort == 'org',
+                            sum(all.daily.hosp$mental.stat == 'Delirious', na.rm = TRUE),
+                            sum(all.daily.hosp$mental.stat.imp == 'Delirious', na.rm = TRUE))),
+         denom.all = ifelse(cohort == 'org', n.days.asmt, n.hosp.days),
+         pct.del = round((nsub / denom.del)*100),
+         pct.all = round((nsub / denom.all)*100),
+         npct = ifelse(subtype == 'n.days', format(nsub, big.mark = ','),
+                ifelse(!is.na(pct.del),
+                       paste0(pct.all, '% of all; ', pct.del, '% of delirious (', nsub, ')'),
+                       paste0(pct.all, '% (', nsub, ')')))) %>%
+  select(subtype, cohort, npct) %>%
+  spread(key = cohort, value = npct) %>%
+  mutate(rowlabel = c(paste0(space.6, 'Any hyperactive'),
+                      paste0(space.6, 'Any hypoactive'),
+                      paste0(space.6, 'Both hypo- and hyperactive'),
+                      paste0(space.3, 'Any coma'), #'Any coma',
+                      'Number of patient-days',
+                      paste0(space.3, 'Any delirium'), #'Any delirium',
+                      paste0(space.3, 'No delirium or coma'), #'No delirium or coma',
+                      paste0(space.6, 'Hyperactive only'),
+                      paste0(space.6, 'Hypoactive only')),
+         sortby = c(5, 4, 6, 2, 0, 3, 1, 8, 7)) %>%
+  arrange(sortby) %>%
+  select(rowlabel, org, imp)
+
+names(subtypes.by.day) <- c('', 'Recorded Data', 'Recorded + Imputed Data')
+
+```
+
+#### `r table_nums('describe_byday')`
+```{r print_desc_day, results = 'asis'}
+pandoc.table(subtypes.by.day,
+             justify = c('left', 'right', 'right'), split.cells = Inf, split.tables = Inf)
+
+```
+
+```{r describe_subtypes_pt}
+## -- Table for all *patients* (using imputed data) ------------------------------------------------
+## Function to determine whether patient ever had condition in question
+ever.had.this <- function(x, value = 'Yes'){
+  factor(as.numeric(sum(x == value, na.rm = TRUE) > 0),
+         levels = 0:1, labels = c('No', 'Yes'))
+}
+
+days.subtypes <- all.daily.hosp %>%
+  group_by(id) %>%
+  summarise(ever.hypodel.imp = ever.had.this(hypo.del.imp),
+            days.hypodel.imp = sum(hypo.del.imp == 'Yes', na.rm = TRUE),
+            ever.hyperdel.imp = ever.had.this(hyper.del.imp),
+            days.hyperdel.imp = sum(hyper.del.imp == 'Yes', na.rm = TRUE),
+            ever.bothdel.imp = ever.had.this(mental.stat.subtype.imp,
+                                             'Both hypo- and hyperactive delirium'),
+            days.bothdel.imp =
+              sum(mental.stat.subtype.imp == 'Both hypo- and hyperactive delirium', na.rm = TRUE),
+            ever.onlyhypo.imp = ever.had.this(mental.stat.subtype.imp, 'Hypoactive delirium'),
+            days.onlyhypo.imp = sum(mental.stat.subtype.imp == 'Hypoactive delirium', na.rm = TRUE),
+            ever.onlyhyper.imp = ever.had.this(mental.stat.subtype.imp, 'Hyperactive delirium'),
+            days.onlyhyper.imp =
+              sum(mental.stat.subtype.imp == 'Hyperactive delirium', na.rm = TRUE)) %>%
+  mutate(days.hypodel.exp = ifelse(days.hypodel.imp == 0, NA, days.hypodel.imp),
+         days.hyperdel.exp = ifelse(days.hyperdel.imp == 0, NA, days.hyperdel.imp),
+         days.bothdel.exp = ifelse(days.bothdel.imp == 0, NA, days.bothdel.imp),
+         days.onlyhypo.exp = ifelse(days.onlyhypo.imp == 0, NA, days.onlyhypo.imp),
+         days.onlyhyper.exp = ifelse(days.onlyhyper.imp == 0, NA, days.onlyhyper.imp))
+
+all.oneobs <- left_join(all.oneobs, days.subtypes, by = 'id')
+all.oneobs <- upData(all.oneobs,
+  labels = c(ever.hypodel.imp = 'Ever had hypoactive delirium',
+             ever.hyperdel.imp = 'Ever had hyperactive delirium',
+             ever.onlyhypo.imp = 'Ever had day with only hypoactive delirium',
+             ever.onlyhyper.imp = 'Ever had day with only hyperactive delirium',
+             ever.bothdel.imp = 'Ever had day with both hypo- and hyperactive delirium',
+             days.hypodel.imp = 'Days of hypoactive delirium',
+             days.hyperdel.imp = 'Days of hyperactive delirium',
+             days.bothdel.imp = 'Days of both hypo- and hyperactive delirium',
+             days.onlyhypo.imp = 'Days of only hypoactive delirium',
+             days.onlyhyper.imp = 'Days of only hyperactive delirium',
+             days.hypodel.exp = 'Days of hypoactive delirium among exposed',
+             days.hyperdel.exp = 'Days of hyperactive delirium among exposed',
+             days.bothdel.exp = 'Days of both hypo- and hyperactive delirium among exposed',
+             days.onlyhypo.exp = 'Days of only hypoactive delirium among exposed',
+             days.onlyhyper.exp = 'Days of only hyperactive delirium among exposed'))
+
+mental.status.table <- summaryM(coma.s.imp + del.s.imp +
+                                  ever.hypodel.imp + days.hypodel.imp + days.hypodel.exp +
+                                  ever.hyperdel.imp + days.hyperdel.imp + days.hyperdel.exp +
+                                  ever.bothdel.imp + days.bothdel.imp + days.bothdel.exp +
+                                  ever.onlyhypo.imp + days.onlyhypo.imp + days.onlyhypo.exp +
+                                  ever.onlyhyper.imp + days.onlyhyper.imp + days.onlyhyper.exp ~ 1,
+                                data = all.oneobs, continuous = 5)
+
+```
+
+#### `r table_nums('describe_bypt')`
+```{r print_desc_pt, results = 'asis'}
+html(mental.status.table, rmarkdown = TRUE, prmsd = TRUE, what = '%', npct = 'both', digits = 2,
+     long = TRUE, caption = '', prn = FALSE)
+```
+
+#### `r figure_nums('describe_bypt')`
+```{r print_desc_pt_fig, results = 'asis', fig.height = 10}
+putHfig(plot(mental.status.table, which = 'continuous'))
+
+```
+
