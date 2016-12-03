@@ -51,35 +51,12 @@ figure_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Pa
 ```
 
 ```{r combinedata}
-## Eventually, this chunk will combine VA and non-VA data into all.oneobs, all.assess, all.fu. For
-## maximum efficiency, it currently just keeps necessary variables from BRAIN data and renames those
-## data sets to the names which will be used eventually.
+## -- Source script which either combines BRAIN+MINDICU data, or sets up BRAIN data, ---------------
+## -- depending on operating system; creates "all.xxxxx" data sets to use in rest of analysis ------
 
 ## If working with VA data
 if(Sys.info()['sysname'] == 'Windows'){
-  load('braindata.Rdata')
-  load('minddata.Rdata')
-  
-  ## Change variable names in each data set so that they can be combined
-  ## All death variables are "died.mind.30", eg; change to "died.ever.30"
-  names(mind.oneobs) <- gsub('mind', 'ever', names(mind.oneobs))
-  names(brain.oneobs) <- gsub('brain', 'ever', names(brain.oneobs))
-  
-  ## Remove "new" from all opioid vars in BRAIN; MIND only used new conversion, only has one set
-  names(brain.oneobs) <- gsub('\\.new', '', names(brain.oneobs))
-  names(brain.daily) <- gsub('\\.new', '', names(brain.daily))
-  
-  ## Variables to keep: intersection of variables in two data sets
-  keep.oneobs <- intersect(names(brain.oneobs), names(mind.oneobs))
-  keep.daily <- intersect(names(brain.daily), names(mind.daily))
-  keep.fu <- intersect(names(brain.fu), names(mind.fu))
-  
-  ## Combine data sets
-  all.oneobs <- rbind(brain.oneobs[,keep.oneobs], mind.oneobs[,keep.oneobs])
-  all.daily <- rbind(brain.daily[,keep.daily], mind.daily[,keep.daily])
-  all.assess <- rbind(brain.assess, mind.assess)
-  all.fu <- rbind(brain.fu[,keep.fu], mind.fu[,keep.fu])
-
+  source('combine_brainmind_datasets.R')
 ## If using only BRAIN data  
 } else{
   ## Home directory (if on Mac, assumes connected to desktop via Samba)
@@ -88,21 +65,7 @@ if(Sys.info()['sysname'] == 'Windows'){
   } else{
     home.dir <- '/home'
   }
-
-  load(file.path(home.dir, 'thomps23', 'ICUDelirium', 'BRAINICU', 'braindata.Rdata'))
-  
-  ## -- Change variable names in BRAIN data sets to combine with MIND ------------------------------
-  ## brain.oneobs: all death variables are "died.brain.30", eg; change to "died.ever.30"
-  names(brain.oneobs) <- gsub('brain', 'ever', names(brain.oneobs))
-  
-  ## Remove "new" from all opioid variables; MIND only used new conversion, only has one set
-  names(brain.oneobs) <- gsub('\\.new', '', names(brain.oneobs))
-  names(brain.daily) <- gsub('\\.new', '', names(brain.daily))
-  
-  all.oneobs <- brain.oneobs
-  all.daily <- brain.daily
-  all.assess <- brain.assess
-  all.fu <- brain.fu
+  source(file.path(home.dir, 'thomps23', 'ICUDelirium', 'BRAINICU', 'combine_brainmind_datasets.R'))
 }
 
 ```
@@ -483,4 +446,3 @@ html(mental.status.table, rmarkdown = TRUE, prmsd = TRUE, what = '%', npct = 'bo
 putHfig(plot(mental.status.table, which = 'continuous'))
 
 ```
-
