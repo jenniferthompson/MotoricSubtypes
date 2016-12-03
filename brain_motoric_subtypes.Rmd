@@ -70,6 +70,94 @@ if(Sys.info()['sysname'] == 'Windows'){
 
 ```
 
+# Description of Cohort
+
+```{r consortinfo}
+## -- Determine whether patients had at least partial followup at each time point ------------------
+cog.outcomes <- c('rbans.global.score', 'rbans.immmemory.tscore', 'rbans.delayedmem.tscore',
+                  'rbans.visuo.tscore', 'rbans.attention.tscore', 'rbans.language.tscore',
+                  'trail.b.tscore', 'mmse.tscore')
+
+all.fu$n.cog.tests <- rowSums(!is.na(all.fu[,cog.outcomes]))
+all.fu$cog.test.status <- with(all.fu, factor(ifelse(n.cog.tests == 0, 1,
+                                              ifelse(n.cog.tests == length(cog.outcomes), 3, 2)),
+                                              levels = 1:3,
+                                              labels = c('No cognitive data',
+                                                         'Partial cognitive data',
+                                                         'Complete cognitive data')))
+
+followup.status <- all.fu %>%
+  filter(fu.period %in% c('3 Month', '12 Month')) %>%
+  select(id, fu.period, status, cog.test.status, one_of(cog.outcomes)) %>%
+  mutate(fu.period = gsub(' Month', '', fu.period)) %>%
+  gather(key = var, value = varvalue, status:mmse.tscore) %>%
+  unite(var.time, var, fu.period, sep = '.') %>%
+  spread(key = var.time, value = varvalue)
+
+## -- Create data frame of all screened patients, exclusion reasons, and status at each time -------
+## -- point: enrollment, discharge, 3m, 12m --------------------------------------------------------
+all.exc$id <- all.exc$ex.id
+
+all.pts <- merge(subset(all.exc, select = c(id, exc.rsn.2)),
+                 subset(all.oneobs, select = c(id, withdrew.data, studywd.amt, died.inhosp)),
+                 by = 'id', all = TRUE) %>%
+  left_join(select(followup.status, id, status.3, cog.test.status.3, status.12, cog.test.status.12),
+            by = 'id') %>%
+  mutate(## Status at enrollment: excluded, refused, or enrolled
+         was.approached = is.na(exc.rsn.2) | exc.rsn.2 == 'Surrogate or patient refused consent',
+         refused.consent = !is.na(exc.rsn.2) & exc.rsn.2 == 'Surrogate or patient refused consent',
+         was.enrolled = is.na(exc.rsn.2),
+         status.enroll = factor(ifelse(!was.approached, 1,
+                                ifelse(refused.consent, 2, 3)),
+                                levels = 1:3,
+                                labels = c('Excluded', 'Refused', 'Enrolled')),
+         ## Status at discharge: discharged alive, withdrew, died in hospital
+         status.discharge = factor(ifelse(!was.enrolled | withdrew.data, NA,
+                                   ifelse(died.inhosp == 'Died in hospital', 1,
+                                   ifelse(!is.na(studywd.amt), 2, 3))),
+                                   levels = 1:3,
+                                   labels = c('Died in hospital',
+                                              'Withdrew in hospital',
+                                              'Discharged alive')),
+         ## Status at 3 months: died between discharge and followup, withdrew between discharge
+         ## and followup, permanently lost to followup, temporarily lost to followup, or tested
+         status.3m = factor(ifelse(is.na(status.discharge) |
+                                     status.discharge %in% c('Died in hospital',
+                                                             'Withdrew in hospital'), NA,
+                            ifelse(status.3 == 'Deceased', 1,
+                            ifelse(status.3 == 'Living-Withdrew from the study', 2,
+                            ifelse(cog.test.status.3 == 'No cognitive data' &
+                                     (is.na(cog.test.status.12) |
+                                        cog.test.status.12 == 'No cognitive data'), 3,
+                            ifelse(cog.test.status.3 == 'No cognitive data', 4,
+                            ifelse(cog.test.status.3 == 'Partial cognitive data', 5,
+                            ifelse(cog.test.status.3 == 'Complete cognitive data', 6, NA))))))),
+                            levels = 1:6,
+                            labels = c('Died before 3m followup',
+                                       'Withdrew before 3m followup',
+                                       'Permanently lost to followup',
+                                       'Temporarily lost to followup',
+                                       'Partial cognitive testing',
+                                       'Complete cognitive testing')),
+         ## Status at 12 months: died between discharge and followup, withdrew between discharge
+         ## and followup, lost to followup, or tested
+         status.12m = factor(ifelse(is.na(status.3m) |
+                                     status.3m %in% c('Died before 3m followup',
+                                                      'Withdrew before 3m followup'), NA,
+                            ifelse(status.12 == 'Deceased', 1,
+                            ifelse(status.12 == 'Living-Withdrew from the study', 2,
+                            ifelse(cog.test.status.12 == 'No cognitive data', 3,
+                            ifelse(cog.test.status.12 == 'Partial cognitive data', 4,
+                            ifelse(cog.test.status.12 == 'Complete cognitive data', 5, NA)))))),
+                            levels = 1:5,
+                            labels = c('Died before 12m followup',
+                                       'Withdrew before 12m followup',
+                                       'Lost to followup',
+                                       'Partial cognitive testing',
+                                       'Complete cognitive testing')))
+
+```
+
 # Primary Exposure: Motoric Subtypes of Delirium
 Most of the variables included in these analyses have been documented or discussed elsewhere. The
 exposure variables specific to this analysis are hypo- and hyperactive delirium, generally referred
