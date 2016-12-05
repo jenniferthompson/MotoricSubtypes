@@ -294,6 +294,17 @@ all.daily <- all.daily %>%
                                         c('Both hypo- and hyperactive delirium',
                                           'Hypoactive delirium'), 1, 0)),
                                levels = 0:1, labels = c('No', 'Yes')),
+         ## Types of hypoactive delirium: on or off sedation (benzos/propofol)
+         sed.hypo.del.today = factor(ifelse(is.na(hypo.del.today), NA,
+                                     ifelse(hypo.del.today == 'Yes' &
+                                              ((!is.na(tot.benz) & tot.benz > 0) |
+                                                 (!is.na(tot.prop) & tot.prop > 0)), 1, 0)),
+                                     levels = 0:1, labels = c('No', 'Yes')),
+         sed.hypo.del.imp = factor(ifelse(is.na(hypo.del.imp), NA,
+                                   ifelse(hypo.del.imp == 'Yes' &
+                                            ((!is.na(tot.benz) & tot.benz > 0) |
+                                               (!is.na(tot.prop) & tot.prop > 0)), 1, 0)),
+                                   levels = 0:1, labels = c('No', 'Yes')),
          hyper.del.today = factor(ifelse(is.na(mental.stat.subtype), NA,
                                   ifelse(mental.stat.subtype %in%
                                            c('Both hypo- and hyperactive delirium',
@@ -423,6 +434,7 @@ subtypes.by.day <- all.daily.hosp %>%
             n.coma_org = sum(coma.today == 'Coma', na.rm = TRUE),
             n.norm_org = sum(mental.stat == 'Normal', na.rm = TRUE),
             n.anyhypo_org = sum(hypo.del.today == 'Yes', na.rm = TRUE),
+            n.sedhypo_org = sum(sed.hypo.del.today == 'Yes', na.rm = TRUE),
             n.anyhyper_org = sum(hyper.del.today == 'Yes', na.rm = TRUE),
             n.onlyhypo_org = sum(mental.stat.subtype == 'Hypoactive delirium', na.rm = TRUE),
             n.onlyhyper_org = sum(mental.stat.subtype == 'Hyperactive delirium', na.rm = TRUE),
@@ -432,6 +444,7 @@ subtypes.by.day <- all.daily.hosp %>%
             n.coma_imp = sum(coma.today.imp == 'Coma', na.rm = TRUE),
             n.norm_imp = sum(mental.stat.imp == 'Normal', na.rm = TRUE),
             n.anyhypo_imp = sum(hypo.del.imp == 'Yes', na.rm = TRUE),
+            n.sedhypo_imp = sum(sed.hypo.del.imp == 'Yes', na.rm = TRUE),
             n.anyhyper_imp = sum(hyper.del.imp == 'Yes', na.rm = TRUE),
             n.onlyhypo_imp = sum(mental.stat.subtype.imp == 'Hypoactive delirium', na.rm = TRUE),
             n.onlyhyper_imp = sum(mental.stat.subtype.imp == 'Hyperactive delirium', na.rm = TRUE),
@@ -441,16 +454,22 @@ subtypes.by.day <- all.daily.hosp %>%
   gather(key = subtype, value = nsub) %>%
   separate(subtype, into = c('subtype', 'cohort'), sep = '_') %>%
   mutate(denom.del = ifelse(subtype %in% c('n.coma', 'n.del', 'n.norm'), NA,
+                     ifelse(subtype %in% c('n.sedhypo') & cohort == 'org',
+                            sum(all.daily.hosp$hypo.del.today == 'Yes', na.rm = TRUE),
+                     ifelse(subtype %in% c('n.sedhypo') & cohort == 'imp',
+                            sum(all.daily.hosp$hypo.del.imp == 'Yes', na.rm = TRUE),
                      ifelse(cohort == 'org',
                             sum(all.daily.hosp$mental.stat == 'Delirious', na.rm = TRUE),
-                            sum(all.daily.hosp$mental.stat.imp == 'Delirious', na.rm = TRUE))),
+                            sum(all.daily.hosp$mental.stat.imp == 'Delirious', na.rm = TRUE))))),
          denom.all = ifelse(cohort == 'org', n.days.asmt, n.hosp.days),
          pct.del = round((nsub / denom.del)*100),
          pct.all = round((nsub / denom.all)*100),
          npct = ifelse(subtype == 'n.days', format(nsub, big.mark = ','),
+                ifelse(!is.na(pct.del) & subtype == 'n.sedhypo',
+                       paste0(pct.all, '% of all; ', pct.del, '% of hypoactive (', nsub, ')'),
                 ifelse(!is.na(pct.del),
                        paste0(pct.all, '% of all; ', pct.del, '% of delirious (', nsub, ')'),
-                       paste0(pct.all, '% (', nsub, ')')))) %>%
+                       paste0(pct.all, '% (', nsub, ')'))))) %>%
   select(subtype, cohort, npct) %>%
   spread(key = cohort, value = npct) %>%
   mutate(rowlabel = c(paste0(space.6, 'Any hyperactive'),
@@ -461,8 +480,9 @@ subtypes.by.day <- all.daily.hosp %>%
                       paste0(space.3, 'Any delirium'), #'Any delirium',
                       paste0(space.3, 'No delirium or coma'), #'No delirium or coma',
                       paste0(space.6, 'Hyperactive only'),
-                      paste0(space.6, 'Hypoactive only')),
-         sortby = c(5, 4, 6, 2, 0, 3, 1, 8, 7)) %>%
+                      paste0(space.6, 'Hypoactive only'),
+                      paste0(space.6, space.3, 'Hypoactive on sedation')),
+         sortby = c(6, 4, 7, 2, 0, 3, 1, 9, 8, 5)) %>%
   arrange(sortby) %>%
   select(rowlabel, org, imp)
 
@@ -471,6 +491,11 @@ names(subtypes.by.day) <- c('', 'Recorded Data', 'Recorded + Imputed Data')
 ```
 
 #### `r table_nums('describe_byday')`
+Hypoactive "on sedation" indicates that the patient had at least one CAM+ assessment on a study day
+on which the total 24h dose of benzodiazepines and/or propofol was greater than 0. Due to
+limitations of data collection, we cannot say for sure whether delirium occurred while the patient
+was actually on sedatives.
+
 ```{r print_desc_day, results = 'asis'}
 pandoc.table(subtypes.by.day,
              justify = c('left', 'right', 'right'), split.cells = Inf, split.tables = Inf)
@@ -489,6 +514,8 @@ days.subtypes <- all.daily.hosp %>%
   group_by(id) %>%
   summarise(ever.hypodel.imp = ever.had.this(hypo.del.imp),
             days.hypodel.imp = sum(hypo.del.imp == 'Yes', na.rm = TRUE),
+            ever.sedhypodel.imp = ever.had.this(sed.hypo.del.imp),
+            days.sedhypodel.imp = sum(sed.hypo.del.imp == 'Yes', na.rm = TRUE),
             ever.hyperdel.imp = ever.had.this(hyper.del.imp),
             days.hyperdel.imp = sum(hyper.del.imp == 'Yes', na.rm = TRUE),
             ever.bothdel.imp = ever.had.this(mental.stat.subtype.imp,
@@ -501,6 +528,7 @@ days.subtypes <- all.daily.hosp %>%
             days.onlyhyper.imp =
               sum(mental.stat.subtype.imp == 'Hyperactive delirium', na.rm = TRUE)) %>%
   mutate(days.hypodel.exp = ifelse(days.hypodel.imp == 0, NA, days.hypodel.imp),
+         days.sedhypodel.exp = ifelse(days.sedhypodel.imp == 0, NA, days.sedhypodel.imp),
          days.hyperdel.exp = ifelse(days.hyperdel.imp == 0, NA, days.hyperdel.imp),
          days.bothdel.exp = ifelse(days.bothdel.imp == 0, NA, days.bothdel.imp),
          days.onlyhypo.exp = ifelse(days.onlyhypo.imp == 0, NA, days.onlyhypo.imp),
@@ -509,16 +537,19 @@ days.subtypes <- all.daily.hosp %>%
 all.oneobs <- left_join(all.oneobs, days.subtypes, by = 'id')
 all.oneobs <- upData(all.oneobs,
   labels = c(ever.hypodel.imp = 'Ever had hypoactive delirium',
+             ever.sedhypodel.imp = 'Ever had hypoactive delirium on sedation',
              ever.hyperdel.imp = 'Ever had hyperactive delirium',
              ever.onlyhypo.imp = 'Ever had day with only hypoactive delirium',
              ever.onlyhyper.imp = 'Ever had day with only hyperactive delirium',
              ever.bothdel.imp = 'Ever had day with both hypo- and hyperactive delirium',
              days.hypodel.imp = 'Days of hypoactive delirium',
+             days.sedhypodel.imp = 'Days of hypoactive delirium on sedation',
              days.hyperdel.imp = 'Days of hyperactive delirium',
              days.bothdel.imp = 'Days of both hypo- and hyperactive delirium',
              days.onlyhypo.imp = 'Days of only hypoactive delirium',
              days.onlyhyper.imp = 'Days of only hyperactive delirium',
              days.hypodel.exp = 'Days of hypoactive delirium among exposed',
+             days.sedhypodel.exp = 'Days of hypoactive delirium on sedation among exposed',
              days.hyperdel.exp = 'Days of hyperactive delirium among exposed',
              days.bothdel.exp = 'Days of both hypo- and hyperactive delirium among exposed',
              days.onlyhypo.exp = 'Days of only hypoactive delirium among exposed',
@@ -543,6 +574,7 @@ all.oneobs.desc <- rbind(all.oneobs.everyone, all.oneobs.survivors, all.oneobs.l
 ## Redo labels for factors. Shrug.
 all.oneobs.desc <- upData(all.oneobs.desc,
   labels = c(ever.hypodel.imp = 'Ever had hypoactive delirium',
+             ever.sedhypodel.imp = 'Ever had hypoactive delirium on sedation',
              ever.hyperdel.imp = 'Ever had hyperactive delirium',
              ever.onlyhypo.imp = 'Ever had day with only hypoactive delirium',
              ever.onlyhyper.imp = 'Ever had day with only hyperactive delirium',
@@ -550,6 +582,7 @@ all.oneobs.desc <- upData(all.oneobs.desc,
 
 mental.status.table <- summaryM(coma.s.imp + del.s.imp +
                                   ever.hypodel.imp + days.hypodel.imp + days.hypodel.exp +
+                                  ever.sedhypodel.imp + days.sedhypodel.imp + days.sedhypodel.exp +
                                   ever.hyperdel.imp + days.hyperdel.imp + days.hyperdel.exp +
                                   ever.bothdel.imp + days.bothdel.imp + days.bothdel.exp +
                                   ever.onlyhypo.imp + days.onlyhypo.imp + days.onlyhypo.exp +
@@ -569,11 +602,11 @@ html(mental.status.table, rmarkdown = TRUE, prmsd = TRUE, what = '%', npct = 'bo
 ```{r print_desc_pt_fig, results = 'asis'}
 putHfig(plot(summaryM(coma.s.imp + del.s.imp + days.hypodel.imp + days.hypodel.exp ~ ptgroup,
                       data = all.oneobs.desc, continuous = 5), which = 'continuous'))
-putHfig(plot(summaryM(days.hyperdel.imp + days.hyperdel.exp + days.bothdel.imp +
-                        days.bothdel.exp ~ ptgroup,
+putHfig(plot(summaryM(days.sedhypodel.imp + days.sedhypodel.exp + days.hyperdel.imp +
+                        days.hyperdel.exp ~ ptgroup,
                       data = all.oneobs.desc, continuous = 5), which = 'continuous'))
-putHfig(plot(summaryM(days.onlyhypo.imp + days.onlyhypo.exp + days.onlyhyper.imp +
-                        days.onlyhyper.exp ~ ptgroup,
+putHfig(plot(summaryM(days.bothdel.imp + days.bothdel.exp + days.onlyhypo.imp + days.onlyhypo.exp +
+                        days.onlyhyper.imp + days.onlyhyper.exp ~ ptgroup,
                       data = all.oneobs.desc, continuous = 5), which = 'continuous'))
 
 ```
