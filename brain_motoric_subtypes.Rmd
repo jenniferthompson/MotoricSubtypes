@@ -25,7 +25,7 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, results='hi
 options(width = 200)
 ```
 
-```{r general_setup}
+```{r general_setup, results='hide'}
 library(tidyverse)
 library(pander)
 library(rms)
@@ -139,6 +139,9 @@ all.pts <- merge(subset(all.exc, select = c(id, exc.rsn.2)),
                                        'Temporarily lost to followup',
                                        'Partial cognitive testing',
                                        'Complete cognitive testing')),
+         ## Include in main analysis at 3 months: if at least partial cognitive data
+         include.3m = !is.na(status.3m) & status.3m %in%
+           paste(c('Partial', 'Complete'), 'cognitive testing'),
          ## Status at 12 months: died between discharge and followup, withdrew between discharge
          ## and followup, lost to followup, or tested
          status.12m = factor(ifelse(is.na(status.3m) |
@@ -154,7 +157,15 @@ all.pts <- merge(subset(all.exc, select = c(id, exc.rsn.2)),
                                        'Withdrew before 12m followup',
                                        'Lost to followup',
                                        'Partial cognitive testing',
-                                       'Complete cognitive testing')))
+                                       'Complete cognitive testing')),
+         ## Include in main analysis at 12 months: if at least partial cognitive data
+         include.12m = !is.na(status.12m) & status.12m %in%
+           paste(c('Partial', 'Complete'), 'cognitive testing'))
+
+## Create vectors of IDs of patients included in long-term analyses at either time point
+ltpts.either <- subset(all.pts, include.3m | include.12m)$id
+ltpts.3m <- subset(all.pts, include.3m)$id
+ltpts.12m <- subset(all.pts, include.12m)$id
 
 ```
 
@@ -513,13 +524,38 @@ all.oneobs <- upData(all.oneobs,
              days.onlyhypo.exp = 'Days of only hypoactive delirium among exposed',
              days.onlyhyper.exp = 'Days of only hyperactive delirium among exposed'))
 
+## Create data set with cohorts "stacked": one for all enrolled patients with data, one for only
+## hospital survivors, one for patients included in long-term analyses
+all.oneobs.everyone <- subset(all.oneobs, !(id %in% subset(all.pts, withdrew.data)$id))
+all.oneobs.everyone$ptgroup <- 1
+all.oneobs.survivors <-
+  subset(all.oneobs, id %in% subset(all.pts, status.discharge == 'Discharged alive')$id)
+all.oneobs.survivors$ptgroup <- 2
+all.oneobs.lt <- subset(all.oneobs, id %in% ltpts.either)
+all.oneobs.lt$ptgroup <- 3
+all.oneobs.desc <- rbind(all.oneobs.everyone, all.oneobs.survivors, all.oneobs.lt) %>%
+  mutate(ptgroup = factor(ptgroup,
+                          levels = 1:3,
+                          labels = c('All Patients',
+                                     'Hospital Survivors',
+                                     'LT Cognitive Data')))
+
+## Redo labels for factors. Shrug.
+all.oneobs.desc <- upData(all.oneobs.desc,
+  labels = c(ever.hypodel.imp = 'Ever had hypoactive delirium',
+             ever.hyperdel.imp = 'Ever had hyperactive delirium',
+             ever.onlyhypo.imp = 'Ever had day with only hypoactive delirium',
+             ever.onlyhyper.imp = 'Ever had day with only hyperactive delirium',
+             ever.bothdel.imp = 'Ever had day with both hypo- and hyperactive delirium'))
+
 mental.status.table <- summaryM(coma.s.imp + del.s.imp +
                                   ever.hypodel.imp + days.hypodel.imp + days.hypodel.exp +
                                   ever.hyperdel.imp + days.hyperdel.imp + days.hyperdel.exp +
                                   ever.bothdel.imp + days.bothdel.imp + days.bothdel.exp +
                                   ever.onlyhypo.imp + days.onlyhypo.imp + days.onlyhypo.exp +
-                                  ever.onlyhyper.imp + days.onlyhyper.imp + days.onlyhyper.exp ~ 1,
-                                data = all.oneobs, continuous = 5)
+                                  ever.onlyhyper.imp + days.onlyhyper.imp +
+                                  days.onlyhyper.exp ~ ptgroup,
+                                data = all.oneobs.desc, continuous = 5)
 
 ```
 
@@ -530,7 +566,14 @@ html(mental.status.table, rmarkdown = TRUE, prmsd = TRUE, what = '%', npct = 'bo
 ```
 
 #### `r figure_nums('describe_bypt')`
-```{r print_desc_pt_fig, results = 'asis', fig.height = 10}
-putHfig(plot(mental.status.table, which = 'continuous'))
+```{r print_desc_pt_fig, results = 'asis'}
+putHfig(plot(summaryM(coma.s.imp + del.s.imp + days.hypodel.imp + days.hypodel.exp ~ ptgroup,
+                      data = all.oneobs.desc, continuous = 5), which = 'continuous'))
+putHfig(plot(summaryM(days.hyperdel.imp + days.hyperdel.exp + days.bothdel.imp +
+                        days.bothdel.exp ~ ptgroup,
+                      data = all.oneobs.desc, continuous = 5), which = 'continuous'))
+putHfig(plot(summaryM(days.onlyhypo.imp + days.onlyhypo.exp + days.onlyhyper.imp +
+                        days.onlyhyper.exp ~ ptgroup,
+                      data = all.oneobs.desc, continuous = 5), which = 'continuous'))
 
 ```
