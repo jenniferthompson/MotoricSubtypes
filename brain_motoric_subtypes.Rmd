@@ -45,6 +45,9 @@ figure_nums <- captioner(prefix = 'Figure')
 table_nums(name = 'screentable', caption = 'Screening and Enrollment')
 table_nums(name = 'exctable', caption = 'Exclusions')
 table_nums(name = 'consorttable', caption = 'Patient Status Over Time')
+table_nums(name = 'describe_baseinhosp',
+           caption = 'Baseline & In-Hospital Characteristics by Cohort')
+table_nums(name = 'describe_followup', caption = 'RBANS and Trails B T-Scores, 3 & 12m')
 table_nums(name = 'describe_byasmt', caption = 'Status and Motoric Subtypes by Assessment')
 table_nums(name = 'describe_byday', caption = 'Status and Motoric Subtypes by Patient-Day')
 table_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
@@ -73,14 +76,9 @@ if(Sys.info()['sysname'] == 'Windows'){
 
 ```
 
-# Description of Cohort
-## Screening, Exclusions, Enrollment, and Patient Status
-`r table_nums('screentable', display = 'cite')` shows the number of patients screened, enrolled and
-excluded in the entire cohort; `r table_nums('exctable', display = 'cite')` presents the reasons for exclusion. `r table_nums('consorttable', display = 'cite')` shows the status of each patient over
-both the in-hospital and followup periods.
-
-```{r consortinfo}
-## -- Determine whether patients had at least partial followup at each time point ------------------
+```{r fu_datamgmt}
+## -- Determine whether patients had at least partial followup at each time point, defined as ------
+## -- at least one RBANS domain, Trails B, and/or MMSE ---------------------------------------------
 cog.outcomes <- c('rbans.global.score', 'rbans.immmemory.tscore', 'rbans.delayedmem.tscore',
                   'rbans.visuo.tscore', 'rbans.attention.tscore', 'rbans.language.tscore',
                   'trail.b.tscore', 'mmse.tscore')
@@ -93,6 +91,8 @@ all.fu$cog.test.status <- with(all.fu, factor(ifelse(n.cog.tests == 0, 1,
                                                          'Partial cognitive data',
                                                          'Complete cognitive data')))
 
+## Original data set has one record per followup time; transpose so that 3, 12m info is in separate
+## variables (wide format)
 followup.status <- all.fu %>%
   filter(fu.period %in% c('3 Month', '12 Month')) %>%
   select(id, fu.period, status, cog.test.status, one_of(cog.outcomes)) %>%
@@ -101,6 +101,31 @@ followup.status <- all.fu %>%
   unite(var.time, var, fu.period, sep = '.') %>%
   spread(key = var.time, value = varvalue)
 
+## Force test scores back to numeric
+test.cols <- names(followup.status) %in% c(paste0(cog.outcomes, '.3'), paste0(cog.outcomes, '.12'))
+for(i in 1:length(test.cols)){
+  if(test.cols[i]){
+    followup.status[,i] <- as.numeric(followup.status[,i])
+  }
+}
+
+## -- Add cognitive scores and status at each time point onto all.oneobs ---------------------------
+all.oneobs <- all.oneobs %>% left_join(followup.status, by = 'id')
+all.oneobs <- upData(all.oneobs,
+  labels = c(rbans.global.score.3 = 'RBANS global score, 3m',
+             rbans.global.score.12 = 'RBANS global score, 12m',
+             trail.b.tscore.3 = 'Trails B t-score, 3m',
+             trail.b.tscore.12 = 'Trails B t-score, 12m'))
+
+```
+
+# Description of Cohort
+## Screening, Exclusions, Enrollment, and Patient Status
+`r table_nums('screentable', display = 'cite')` shows the number of patients screened, enrolled and
+excluded in the entire cohort; `r table_nums('exctable', display = 'cite')` presents the reasons for exclusion. `r table_nums('consorttable', display = 'cite')` shows the status of each patient over
+both the in-hospital and followup periods.
+
+```{r consortinfo}
 ## -- Create data frame of all screened patients, exclusion reasons, and status at each time -------
 ## -- point: enrollment, discharge, 3m, 12m --------------------------------------------------------
 all.exc$id <- all.exc$ex.id
@@ -332,6 +357,65 @@ names(consort.table) <- c('', 'N (%)')
 #### `r table_nums('consorttable')`
 ```{r print_consorttable, results = 'asis'}
 pandoc.table(consort.table, justify = c('left', 'right'), split.cells = Inf, split.table = Inf)
+
+```
+
+## Patient Characteristics
+`r table_nums('describe_baseinhosp', display = 'cite')` describes baseline and in-hospital
+characteristics for all patients, hospital survivors, and patients with at least some long-term
+cognitive followup data. `r table_nums('describe_followup', display = 'cite')` describes RBANS and
+Trails B scores at each followup time point.
+
+#### `r table_nums('describe_baseinhosp')`
+```{r describe_baseinhosp}
+## Create data set with cohorts "stacked": one for all enrolled patients with data, one for only
+## hospital survivors, one for patients included in long-term analyses
+all.oneobs.everyone <- subset(all.oneobs, !(id %in% subset(all.pts, withdrew.data)$id))
+all.oneobs.everyone$ptgroup <- 1
+all.oneobs.survivors <-
+  subset(all.oneobs, id %in% subset(all.pts, status.discharge == 'Discharged alive')$id)
+all.oneobs.survivors$ptgroup <- 2
+all.oneobs.lt <- subset(all.oneobs, id %in% ltpts.either)
+all.oneobs.lt$ptgroup <- 3
+all.oneobs.desc <- rbind(all.oneobs.everyone, all.oneobs.survivors, all.oneobs.lt) %>%
+  mutate(ptgroup = factor(ptgroup,
+                          levels = 1:3,
+                          labels = c('All Patients',
+                                     'Hospital Survivors',
+                                     'LT Cognitive Data')))
+
+## Redo labels for factors. Shrug.
+all.oneobs.desc <- upData(all.oneobs.desc,
+  labels = c(sex.pp = 'Sex',
+             race.pp = 'Race',
+             ins.pp = 'Insurance',
+             frailty = 'CSHA Frailty',
+             icu.type = 'ICU type',
+             ever.vent = 'Ever on MV',
+             died.inhosp = 'Died in the hospital'))
+
+```
+
+```{r print_describe_baseinhosp, results = 'asis'}
+html(summaryM(age.enroll + sex.pp + race.pp + edu + ins.pp + frailty + adl.e + faq.e +
+                iqcode.score.e + icu.type + sofa + num.apache + charlson.score + ever.vent +
+                vent.los.tot.eo + mean.benz.icu + mean.op.icu + mean.prop.icu + mean.dex.icu +
+                mean.hal.icu + mean.sofa.icu + icudays.sevseptic.s + icu.los.tot + hosp.los +
+                died.inhosp ~ ptgroup,
+              data = all.oneobs.desc),
+     rmarkdown = TRUE, prmsd = TRUE, brmsd = TRUE,
+     what = '%', npct = 'both', digits = 2, exclude1 = FALSE, long = TRUE, caption = '',
+     prn = FALSE, middle.bold = TRUE, msdsize = markupSpecs$html$smaller)
+
+```
+
+#### `r table_nums('describe_followup')`
+```{r describe_fu, results = 'asis'}
+html(summaryM(rbans.global.score.3 + rbans.global.score.12 +
+                trail.b.tscore.3 + trail.b.tscore.12 ~ 1,
+              data = subset(all.oneobs, id %in% ltpts.either)),
+     rmarkdown = TRUE, prn = TRUE, prmsd = TRUE, brmsd = TRUE,
+     digits = 2, caption = '', middle.bold = TRUE, msdsize = markupSpecs$html$smaller)
 
 ```
 
@@ -720,30 +804,26 @@ all.oneobs <- upData(all.oneobs,
              days.onlyhypo.exp = 'Days of only hypoactive delirium among exposed',
              days.onlyhyper.exp = 'Days of only hyperactive delirium among exposed'))
 
-## Create data set with cohorts "stacked": one for all enrolled patients with data, one for only
-## hospital survivors, one for patients included in long-term analyses
-all.oneobs.everyone <- subset(all.oneobs, !(id %in% subset(all.pts, withdrew.data)$id))
-all.oneobs.everyone$ptgroup <- 1
-all.oneobs.survivors <-
-  subset(all.oneobs, id %in% subset(all.pts, status.discharge == 'Discharged alive')$id)
-all.oneobs.survivors$ptgroup <- 2
-all.oneobs.lt <- subset(all.oneobs, id %in% ltpts.either)
-all.oneobs.lt$ptgroup <- 3
-all.oneobs.desc <- rbind(all.oneobs.everyone, all.oneobs.survivors, all.oneobs.lt) %>%
-  mutate(ptgroup = factor(ptgroup,
-                          levels = 1:3,
-                          labels = c('All Patients',
-                                     'Hospital Survivors',
-                                     'LT Cognitive Data')))
-
-## Redo labels for factors. Shrug.
+all.oneobs.desc <- left_join(all.oneobs.desc, days.subtypes, by = 'id')
 all.oneobs.desc <- upData(all.oneobs.desc,
   labels = c(ever.hypodel.imp = 'Ever had hypoactive delirium',
              ever.sedhypodel.imp = 'Ever had hypoactive delirium on sedation',
              ever.hyperdel.imp = 'Ever had hyperactive delirium',
              ever.onlyhypo.imp = 'Ever had day with only hypoactive delirium',
              ever.onlyhyper.imp = 'Ever had day with only hyperactive delirium',
-             ever.bothdel.imp = 'Ever had day with both hypo- and hyperactive delirium'))
+             ever.bothdel.imp = 'Ever had day with both hypo- and hyperactive delirium',
+             days.hypodel.imp = 'Days of hypoactive delirium',
+             days.sedhypodel.imp = 'Days of hypoactive delirium on sedation',
+             days.hyperdel.imp = 'Days of hyperactive delirium',
+             days.bothdel.imp = 'Days of both hypo- and hyperactive delirium',
+             days.onlyhypo.imp = 'Days of only hypoactive delirium',
+             days.onlyhyper.imp = 'Days of only hyperactive delirium',
+             days.hypodel.exp = 'Days of hypoactive delirium among exposed',
+             days.sedhypodel.exp = 'Days of hypoactive delirium on sedation among exposed',
+             days.hyperdel.exp = 'Days of hyperactive delirium among exposed',
+             days.bothdel.exp = 'Days of both hypo- and hyperactive delirium among exposed',
+             days.onlyhypo.exp = 'Days of only hypoactive delirium among exposed',
+             days.onlyhyper.exp = 'Days of only hyperactive delirium among exposed'))
 
 mental.status.table <- summaryM(coma.s.imp + del.s.imp +
                                   ever.hypodel.imp + days.hypodel.imp + days.hypodel.exp +
