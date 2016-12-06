@@ -42,11 +42,14 @@ library(captioner)
 table_nums <- captioner(prefix = 'Table')
 figure_nums <- captioner(prefix = 'Figure')
 
+table_nums(name = 'screentable', caption = 'Screening and Enrollment')
+table_nums(name = 'exctable', caption = 'Exclusions')
+table_nums(name = 'consorttable', caption = 'Patient Status Over Time')
 table_nums(name = 'describe_byasmt', caption = 'Status and Motoric Subtypes by Assessment')
 table_nums(name = 'describe_byday', caption = 'Status and Motoric Subtypes by Patient-Day')
 table_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
 
-figure_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
+# figure_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
 
 ```
 
@@ -71,6 +74,10 @@ if(Sys.info()['sysname'] == 'Windows'){
 ```
 
 # Description of Cohort
+## Screening, Exclusions, Enrollment, and Patient Status
+`r table_nums('screentable', display = 'cite')` shows the number of patients screened, enrolled and
+excluded in the entire cohort; `r table_nums('exctable', display = 'cite')` presents the reasons for exclusion. `r table_nums('consorttable', display = 'cite')` shows the status of each patient over
+both the in-hospital and followup periods.
 
 ```{r consortinfo}
 ## -- Determine whether patients had at least partial followup at each time point ------------------
@@ -111,6 +118,8 @@ all.pts <- merge(subset(all.exc, select = c(id, exc.rsn.2)),
                                 ifelse(refused.consent, 2, 3)),
                                 levels = 1:3,
                                 labels = c('Excluded', 'Refused', 'Enrolled')),
+         ## Indicator for whether to be included in any analyses: enrolled and kept some data
+         include.main = status.enroll == 'Enrolled' & !withdrew.data,
          ## Status at discharge: discharged alive, withdrew, died in hospital
          status.discharge = factor(ifelse(!was.enrolled | withdrew.data, NA,
                                    ifelse(died.inhosp == 'Died in hospital', 1,
@@ -119,6 +128,10 @@ all.pts <- merge(subset(all.exc, select = c(id, exc.rsn.2)),
                                    labels = c('Died in hospital',
                                               'Withdrew in hospital',
                                               'Discharged alive')),
+         ## Indicator for whether to include in hospital survivors cohort: enrolled, survived
+         ## hospital stay and still in study
+         include.survivors = status.enroll == 'Enrolled' & !withdrew.data &
+           status.discharge == 'Discharged alive',
          ## Status at 3 months: died between discharge and followup, withdrew between discharge
          ## and followup, permanently lost to followup, temporarily lost to followup, or tested
          status.3m = factor(ifelse(is.na(status.discharge) |
@@ -166,6 +179,159 @@ all.pts <- merge(subset(all.exc, select = c(id, exc.rsn.2)),
 ltpts.either <- subset(all.pts, include.3m | include.12m)$id
 ltpts.3m <- subset(all.pts, include.3m)$id
 ltpts.12m <- subset(all.pts, include.12m)$id
+
+```
+
+```{r screen_table}
+## -- Table: Screening and enrollment --------------------------------------------------------------
+## Assign numerators and denominators for each category
+n.screened <- nrow(all.pts)
+n.excluded <- sum(all.pts$status.enroll == 'Excluded')
+d.excluded <- n.screened
+n.approached <- sum(all.pts$was.approached)
+d.approached <- n.screened
+n.refused <- sum(all.pts$refused.consent)
+d.refused <- n.approached
+n.enrolled <- sum(all.pts$was.enrolled)
+d.enrolled <- n.approached
+n.withdrewdata <- sum(all.pts$withdrew.data, na.rm = TRUE)
+d.withdrewdata <- n.enrolled
+n.included <- sum(all.pts$include.main)
+d.included <- n.enrolled
+
+screen.table <- data.frame(spacing = c('', rep(space.3, 2), rep(space.6, 2),
+                                       rep(paste0(space.3, space.6), 2)),
+                           rowlabel = c('Screened', 'Excluded', 'Approached', 'Refused', 'Enrolled',
+                                        'Withdrew all data', 'Included in analyses'),
+                           npts = c(n.screened, n.excluded, n.approached, n.refused, n.enrolled,
+                                    n.withdrewdata, n.included),
+                           dpts = c(NA, d.excluded, d.approached, d.refused, d.enrolled,
+                                    d.withdrewdata, d.included)) %>%
+  mutate(pctpts = round((npts / dpts)*100),
+         npct = ifelse(is.na(dpts), format(npts, big.mark = ','),
+                       paste0(format(npts, big.mark = ','), ' (', pctpts, '%)')),
+         final.rowlabel = ifelse(rowlabel == 'Included in analyses',
+                                 paste0(spacing, '**', rowlabel, '**'),
+                                 paste0(spacing, rowlabel))) %>%
+  select(final.rowlabel, npct)
+
+names(screen.table) <- c('', 'N (%)')
+
+```
+
+
+#### `r table_nums('screentable')`
+```{r print_screentable, results = 'asis'}
+pandoc.table(screen.table, justify = c('left', 'right'), split.cells = Inf, split.table = Inf)
+
+```
+
+#### `r table_nums('exctable')`
+```{r exctable}
+exc.ns <- all.exc %>%
+  group_by(exc.rsn.2) %>%
+  summarise(exc.n = n()) %>%
+  filter(exc.rsn.2 != 'Surrogate or patient refused consent') %>%
+  mutate(exc.pct = round((exc.n / n.excluded)*100),
+         exc.npct = paste0(exc.pct, '% (', exc.n, ')')) %>%
+  arrange(desc(exc.pct)) %>%
+  select(exc.rsn.2, exc.npct)
+
+names(exc.ns) <- c('Exclusion', '% (N)')
+
+```
+```{r print_exctable, results = 'asis'}
+pandoc.table(exc.ns, justify = c('left', 'right'), split.cells = Inf, split.table = Inf)
+
+```
+
+```{r consort_table}
+## -- Table: Enrolled patient status ---------------------------------------------------------------
+## Assign numerators and denominators for each category
+n.died.inhosp <- sum(all.pts$status.discharge == 'Died in hospital', na.rm = TRUE)
+n.wd.inhosp <- sum(all.pts$status.discharge == 'Withdrew in hospital', na.rm = TRUE)
+n.surv.inhosp <- sum(all.pts$status.discharge == 'Discharged alive', na.rm = TRUE)
+d.died.inhosp <- d.wd.inhosp <- d.surv.inhosp <- n.included
+
+lost.to.fu <- c('Permanently lost to followup', 'Temporarily lost to followup', 'Lost to followup')
+elig.for.fu <- c(lost.to.fu, 'Partial cognitive testing', 'Complete cognitive testing')
+
+n.died.3m <- sum(all.pts$status.3m == 'Died before 3m followup', na.rm = TRUE)
+n.wd.3m <- sum(all.pts$status.3m == 'Withdrew before 3m followup', na.rm = TRUE)
+n.elig.3m <- sum(all.pts$status.3m %in% elig.for.fu, na.rm = TRUE)
+d.died.3m <- d.wd.3m <- d.elig.3m <- n.surv.inhosp
+
+n.lost.3m <- sum(all.pts$status.3m %in% lost.to.fu, na.rm = TRUE)
+n.permlost.3m <- sum(all.pts$status.3m == 'Permanently lost to followup', na.rm = TRUE)
+n.templost.3m <- sum(all.pts$status.3m == 'Temporarily lost to followup', na.rm = TRUE)
+n.inc.3m <- sum(all.pts$include.3m)
+n.part.3m <- sum(all.pts$status.3m == 'Partial cognitive testing', na.rm = TRUE)
+n.comp.3m <- sum(all.pts$status.3m == 'Complete cognitive testing', na.rm = TRUE)
+
+d.lost.3m <- d.inc.3m <- n.elig.3m
+d.permlost.3m <- d.templost.3m <- n.lost.3m
+d.part.3m <- d.comp.3m <- n.inc.3m
+
+n.died.12m <- sum(all.pts$status.12m == 'Died before 12m followup', na.rm = TRUE)
+n.wd.12m <- sum(all.pts$status.12m == 'Withdrew before 12m followup', na.rm = TRUE)
+n.elig.12m <- sum(all.pts$status.12m %in% elig.for.fu, na.rm = TRUE)
+d.died.12m <- d.wd.12m <- d.elig.12m <- n.elig.3m
+
+n.lost.12m <- sum(all.pts$status.12m %in% lost.to.fu, na.rm = TRUE)
+n.inc.12m <- sum(all.pts$include.12m)
+n.part.12m <- sum(all.pts$status.12m == 'Partial cognitive testing', na.rm = TRUE)
+n.comp.12m <- sum(all.pts$status.12m == 'Complete cognitive testing', na.rm = TRUE)
+
+d.lost.12m <- d.inc.12m <- n.elig.12m
+d.part.12m <- d.comp.12m <- n.inc.12m
+
+n.elig.either <- length(ltpts.either)
+d.elig.either <- n.surv.inhosp
+
+consort.table <- data.frame(spacing = c(rep('', 9),
+                                        space.3, space.6, space.6,
+                                        space.3, space.6, space.6, '',
+                                        rep('', 3), space.3, space.3, space.6, space.6, '', ''),
+                            rowlabel = c('Main cohort', '&nbsp;',
+                                         'Died in hospital', 'Withdrew in hospital',
+                                         'Discharged alive, remained in study', '&nbsp;',
+                                         'Died before 3m followup', 'Withdrew before 3m followup',
+                                         'Eligible for 3m outcomes',
+                                         'Lost to followup', 'Permanently (no 12m data)',
+                                         'Temporarily (had 12m data)',
+                                         'Had 3m outcomes', 'Partial', 'Complete', '&nbsp;',
+                                         'Died before 12m followup', 'Withdrew before 12m followup',
+                                         'Eligible for 12m outcomes', 'Lost to followup',
+                                         'Had 12m outcomes', 'Partial', 'Complete', '&nbsp;',
+                                         'Eligible for LT outcomes analyses, either time point'),
+                            npts = c(n.included, NA,
+                                     n.died.inhosp, n.wd.inhosp, n.surv.inhosp, NA,
+                                     n.died.3m, n.wd.3m, n.elig.3m,
+                                     n.lost.3m, n.permlost.3m, n.templost.3m,
+                                     n.inc.3m, n.part.3m, n.comp.3m, NA,
+                                     n.died.12m, n.wd.12m, n.elig.12m, n.lost.12m,
+                                     n.inc.12m, n.part.12m, n.comp.12m, NA, n.elig.either),
+                            dpts = c(NA, NA,
+                                     d.died.inhosp, d.wd.inhosp, d.surv.inhosp, NA,
+                                     d.died.3m, d.wd.3m, d.elig.3m,
+                                     d.lost.3m, d.permlost.3m, d.templost.3m,
+                                     d.inc.3m, d.part.3m, d.comp.3m, NA,
+                                     d.died.12m, d.wd.12m, d.elig.12m, d.lost.12m,
+                                     d.inc.12m, d.part.12m, d.comp.12m, NA, d.elig.either)) %>%
+  mutate(pctpts = round((npts / dpts)*100),
+         npct = ifelse(is.na(npts), '',
+                ifelse(is.na(pctpts), format(npts, big.mark = ','),
+                       paste0(format(npts, big.mark = ','), ' (', pctpts, '%)'))),
+         final.rowlabel = paste0(spacing, rowlabel)) %>%
+  select(final.rowlabel, npct)
+
+names(consort.table) <- c('', 'N (%)')
+
+```
+
+#### `r table_nums('consorttable')`
+```{r print_consorttable, results = 'asis'}
+pandoc.table(consort.table, justify = c('left', 'right'), split.cells = Inf, split.table = Inf)
 
 ```
 
@@ -323,8 +489,7 @@ all.daily.hosp <- filter(all.daily, !is.na(mental.stat.imp))
 
 ## Detailed Description of Motoric Subtypes
 `r table_nums('describe_byasmt', display = 'cite')` - `r table_nums('describe_bypt', display = 'cite')` describe mental status and motoric subtypes by individual assessment, patient-days, and
-by patient. `r figure_nums('describe_bypt', display = 'cite')` shows a visual representation of
-durations of each mental status type or subtype.
+by patient.
 
 ```{r describe_subtypes_asmt}
 ## -- Table for all *assessments* ------------------------------------------------------------------
@@ -491,8 +656,8 @@ names(subtypes.by.day) <- c('', 'Recorded Data', 'Recorded + Imputed Data')
 ```
 
 #### `r table_nums('describe_byday')`
-Hypoactive "on sedation" indicates that the patient had at least one CAM+ assessment on a study day
-on which the total 24h dose of benzodiazepines and/or propofol was greater than 0. Due to
+Hypoactive delirium "on sedation" indicates that the patient had at least one CAM+ assessment on a
+study day on which the total 24h dose of benzodiazepines and/or propofol was greater than 0. Due to
 limitations of data collection, we cannot say for sure whether delirium occurred while the patient
 was actually on sedatives.
 
@@ -594,19 +759,8 @@ mental.status.table <- summaryM(coma.s.imp + del.s.imp +
 
 #### `r table_nums('describe_bypt')`
 ```{r print_desc_pt, results = 'asis'}
-html(mental.status.table, rmarkdown = TRUE, prmsd = TRUE, what = '%', npct = 'both', digits = 2,
-     long = TRUE, caption = '', prn = FALSE)
-```
-
-#### `r figure_nums('describe_bypt')`
-```{r print_desc_pt_fig, results = 'asis'}
-putHfig(plot(summaryM(coma.s.imp + del.s.imp + days.hypodel.imp + days.hypodel.exp ~ ptgroup,
-                      data = all.oneobs.desc, continuous = 5), which = 'continuous'))
-putHfig(plot(summaryM(days.sedhypodel.imp + days.sedhypodel.exp + days.hyperdel.imp +
-                        days.hyperdel.exp ~ ptgroup,
-                      data = all.oneobs.desc, continuous = 5), which = 'continuous'))
-putHfig(plot(summaryM(days.bothdel.imp + days.bothdel.exp + days.onlyhypo.imp + days.onlyhypo.exp +
-                        days.onlyhyper.imp + days.onlyhyper.exp ~ ptgroup,
-                      data = all.oneobs.desc, continuous = 5), which = 'continuous'))
+html(mental.status.table, rmarkdown = TRUE, prmsd = TRUE, brmsd = TRUE,
+     what = '%', npct = 'both', digits = 2, long = TRUE, caption = '', prn = FALSE,
+     middle.bold = TRUE, msdsize = markupSpecs$html$smaller)
 
 ```
