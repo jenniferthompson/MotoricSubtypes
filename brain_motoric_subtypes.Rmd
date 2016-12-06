@@ -274,7 +274,11 @@ subtype.mice.complete <- complete(subtype.mice)
 all.daily <- all.daily %>%
   left_join(select(subtype.mice.complete, id, study.day, del.subtype),
             by = c('id', 'study.day')) %>%
-  mutate(mental.stat.subtype.imp =
+  mutate(## Indicator for whether patient was on sedation (benzodiazepines and/or propofol)
+         on.sedation = ifelse(is.na(mental.stat.imp), NA,
+                              ((!is.na(tot.benz) & tot.benz > 0) |
+                                 (!is.na(tot.prop) & tot.prop > 0))),
+         mental.stat.subtype.imp =
            factor(ifelse(is.na(mental.stat.imp), NA,
                   ifelse(mental.stat.imp == 'Normal', 1,
                   ifelse(mental.stat.imp == 'Comatose', 5,
@@ -296,14 +300,10 @@ all.daily <- all.daily %>%
                                levels = 0:1, labels = c('No', 'Yes')),
          ## Types of hypoactive delirium: on or off sedation (benzos/propofol)
          sed.hypo.del.today = factor(ifelse(is.na(hypo.del.today), NA,
-                                     ifelse(hypo.del.today == 'Yes' &
-                                              ((!is.na(tot.benz) & tot.benz > 0) |
-                                                 (!is.na(tot.prop) & tot.prop > 0)), 1, 0)),
+                                     ifelse(hypo.del.today == 'Yes' & on.sedation, 1, 0)),
                                      levels = 0:1, labels = c('No', 'Yes')),
          sed.hypo.del.imp = factor(ifelse(is.na(hypo.del.imp), NA,
-                                   ifelse(hypo.del.imp == 'Yes' &
-                                            ((!is.na(tot.benz) & tot.benz > 0) |
-                                               (!is.na(tot.prop) & tot.prop > 0)), 1, 0)),
+                                   ifelse(hypo.del.imp == 'Yes' & on.sedation, 1, 0)),
                                    levels = 0:1, labels = c('No', 'Yes')),
          hyper.del.today = factor(ifelse(is.na(mental.stat.subtype), NA,
                                   ifelse(mental.stat.subtype %in%
