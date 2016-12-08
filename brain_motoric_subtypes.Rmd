@@ -51,8 +51,11 @@ table_nums(name = 'describe_followup', caption = 'RBANS and Trails B T-Scores, 3
 table_nums(name = 'describe_byasmt', caption = 'Status and Motoric Subtypes by Assessment')
 table_nums(name = 'describe_byday', caption = 'Status and Motoric Subtypes by Patient-Day')
 table_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
+table_nums(name = 'results_death_12_all',
+           caption = 'Motoric Subtypes and Other Covariates vs 12m Mortality among All Patients')
 
-# figure_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
+figure_nums(name = 'zph_death_12_all',
+            caption = 'Proportional Hazard Assumption, 12m Mortality among All Patients')
 
 ```
 
@@ -116,6 +119,23 @@ paste.covars.missing <- function(miss.list){
   } else{
     return(paste(miss.list[!is.na(miss.list)], collapse = '; '))
   }
+}
+
+```
+
+```{r functions_formatting}
+## -- Function to manually italicize rows in a model results table ---------------------------------
+## -- (emphasize.italics.rows doesn't seem to work) ------------------------------------------------
+ital.rows <- function(modresults){
+  ital.these <- which(modresults[,'pval'] == '')
+  for(i in ital.these){
+    for(j in 1:ncol(modresults)){
+      if(modresults[i,j] != ''){
+        modresults[i,j] <- paste0('*', trim.spaces(modresults[i,j]), '*')
+      }
+    }
+  }
+  modresults
 }
 
 ```
@@ -738,7 +758,7 @@ names(describe.asmts) <- c('Assessment Type', '% (N)')
 
 #### `r table_nums('describe_byasmt')`
 ```{r print_desc_assess, results = 'asis'}
-pandoc.table(describe.asmts, justify = c('left', 'right'), split.cells = 100)
+pandoc.table(describe.asmts, justify = c('left', 'right'), split.cells = Inf)
 
 ```
 
@@ -908,6 +928,13 @@ mental.status.table <- summaryM(coma.s.imp + del.s.imp +
                                   days.onlyhyper.exp ~ ptgroup,
                                 data = all.oneobs.desc, continuous = 5)
 
+## Save elements of all.oneobs, all.oneobs.desc to Rdata file for Shawn
+keep.names.oneobs <- grep('date|posix', names(all.oneobs), invert = TRUE)
+keep.names.oneobs.desc <- grep('date|posix', names(all.oneobs.desc), invert = TRUE)
+shawn.oneobs <- all.oneobs[,keep.names.oneobs]
+shawn.oneobs.desc <- all.oneobs.desc[,keep.names.oneobs.desc]
+save(shawn.oneobs, shawn.oneobs.desc, ltpts.either, file = 'shawn_summaryM.Rdata')
+
 ```
 
 #### `r table_nums('describe_bypt')`
@@ -1057,12 +1084,47 @@ model.death.12.all <- cph(Surv.death.12.all ~ rcs(age.enroll, 3) + edu + iqcode.
                           data = data.death.12.all,
                           x = TRUE, y = TRUE)
 
+```
+
+### Model Assumptions
+We visually checked the assumptions of the Cox proportional hazards model by examining residuals
+over time. The assumption was met satisfactorily for each beta coefficient.
+
+```{r death_12_all_assumptions, results = 'asis'}
+## -- Check proportional hazard assumption ---------------------------------------------------------
+zph.death.12.all <- cox.zph(model.death.12.all, transform = 'log')
+
+par(mfrow = c(1, 2))
+plot(zph.death.12.all, col = 'red', lwd = 2)
+abline(v = 0, lty = 2, col = 'gray')
+par(mfrow = c(1, 1))
+
+```
+
+### Overall Model Results
+After adjusting for other potential confounders, neither hypoactive or hyperactive delirium on a
+given patient-day was associated with a difference in the hazard of death in the twelve months after
+enrollment. Results for all model covariates are presented in `r table_nums('results_death_12_all', display = 'cite')`.
+
+```{r death_12_all_results}
 ## Data frame of model results
 results.death.12.all <- model.results(model.death.12.all,
                                       data.set = data.death.12.all,
                                       short.label = tv.shortlabs,
                                       print.format = 'plain',
-                                      add.stats = c("Model L.R.", "R2"))
+                                      add.stats = c("Model L.R.", "R2")) %>%
+  ital.rows()
+
+names(results.death.12.all) <- c('Covariate', 'Reference\n(usu. 25th %ile)',
+                                 'Comparison\n(usu. 75th %ile)', 'Hazard ratio\n(95% CI)',
+                                 'X^2^', 'df', 'P')
+
+```
+
+```{r death_12_all_results_print, results = 'asis'}
+pandoc.table(results.death.12.all,
+             justify = c('left', rep('right', ncol(results.death.12.all) - 1)),
+             split.cells = Inf, split.tables = Inf, keep.line.breaks = TRUE)
 
 ```
 
