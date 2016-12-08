@@ -58,9 +58,10 @@ table_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Pat
 
 ```{r combinedata}
 ## -- Source scripts: ------------------------------------------------------------------------------
-## -- 1. Either combines BRAIN+MINDICU data, or sets up BRAIN data, depending on operating system; -
-## --    creates "all.xxxxx" data sets to use in rest of analysis ----------------------------------
-## -- 2. Function to create data sets for time-varying Cox models ----------------------------------
+##    1. combine_brainmind_datasets.R: Either combines BRAIN+MINDICU data, or sets up BRAIN data,
+##       depending on operating system; creates "all.xxxxx" data sets to use in rest of analysis
+##    2. timevaryingdata.r: Function to create data sets for time-varying Cox models
+##    3. model_results.R: Combines results of rms model fits into a single data frame
 
 ## If working with VA data
 if(Sys.info()['sysname'] == 'Windows'){
@@ -75,6 +76,7 @@ if(Sys.info()['sysname'] == 'Windows'){
   }
   source(file.path(home.dir, 'thomps23', 'ICUDelirium', 'BRAINICU', 'combine_brainmind_datasets.R'))
   source(file.path(home.dir, 'thomps23', 'ICUDelirium', 'timevarying_data.r'))
+  source(file.path(home.dir, 'thomps23', 'R', 'rmsHelpers', 'model_results.R'))
 }
 
 ```
@@ -966,9 +968,12 @@ daily.icu.covars <- c('hyper.del.imp', 'hypo.del.imp', 'coma.today.imp', 'sevsep
 tv.daily.icu <- filter(all.daily, !is.na(icu.day) & icu.day == 'ICU') %>%
   select(id, study.day, one_of(daily.icu.covars))
 
+## Named vector of variable labels to shorten in time-varying models
+tv.shortlabs <- c("hypo.del.imp" = "Hypoactive", "hyper.del.imp" = "Hyperactive")
+
 ```
 
-```{r death12m_all_datamgmt}
+```{r death_12_all_datamgmt}
 ## -- Data management for 12-month mortality model including all patients --------------------------
 ## -- Create count process data set ----------------------------------------------------------------
 data.death.12.all <- timevarying.data(org.data = tv.daily.icu,
@@ -977,6 +982,12 @@ data.death.12.all <- timevarying.data(org.data = tv.daily.icu,
                                       event.string = 'Died during first 365 days',
                                       data.set = all.oneobs) %>%
   left_join(select(all.oneobs, id, one_of(base.covars)), by = 'id')
+
+## For some reason, factor labels don't transfer
+data.death.12.all <- upData(data.death.12.all,
+  labels = c(coma.today.imp = 'Coma today (imputed)',
+             hypo.del.imp = 'Hypoactive delirium today (imputed)',
+             hyper.del.imp = 'Hyperactive delirium today (imputed)'))
 
 ## -- Describe missingness -------------------------------------------------------------------------
 ## Patients with no days of ICU data
@@ -1024,3 +1035,34 @@ if(!any.miss.death.12.all){
 
 ### Missingness
 `r pttext.miss.death.12.all` `r miss.death.12.all`
+
+Since there was so little missingness and multiple imputation with count process data is not
+trivial, we included only complete case records in this analysis.
+
+```{r death_12_all_model}
+## Set datadist
+datadist.death.12.all <- datadist(data.death.12.all)
+options(datadist = 'datadist.death.12.all')
+
+## Create Surv object for outcome
+Surv.death.12.all <- with(data.death.12.all, {
+  Surv(time = start.day, time2 = stop.day, event = as.numeric(died)) })
+
+## Fit model
+model.death.12.all <- cph(Surv.death.12.all ~ rcs(age.enroll, 3) + edu + iqcode.score.e +
+                            rcs(charlson.score, 3) + rcs(daily.sofa.mod.locf, 3) +
+                            rcs(tot.benz.cube, 3) + rcs(tot.op.cube, 3) + rcs(tot.prop.cube, 3) +
+                            tot.dex.cube + tot.hal.cube + coma.today.imp +
+                            hypo.del.imp*hyper.del.imp,
+                          data = data.death.12.all,
+                          x = TRUE, y = TRUE)
+
+## Data frame of model results
+results.death.12.all <- model.results(model.death.12.all,
+                                      data.set = data.death.12.all,
+                                      short.label = tv.shortlabs,
+                                      print.format = 'plain',
+                                      add.stats = c("Model L.R.", "R2"))
+
+```
+
