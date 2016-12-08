@@ -57,8 +57,10 @@ table_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Pat
 ```
 
 ```{r combinedata}
-## -- Source script which either combines BRAIN+MINDICU data, or sets up BRAIN data, ---------------
-## -- depending on operating system; creates "all.xxxxx" data sets to use in rest of analysis ------
+## -- Source scripts: ------------------------------------------------------------------------------
+## -- 1. Either combines BRAIN+MINDICU data, or sets up BRAIN data, depending on operating system; -
+## --    creates "all.xxxxx" data sets to use in rest of analysis ----------------------------------
+## -- 2. Function to create data sets for time-varying Cox models ----------------------------------
 
 ## If working with VA data
 if(Sys.info()['sysname'] == 'Windows'){
@@ -72,6 +74,46 @@ if(Sys.info()['sysname'] == 'Windows'){
     home.dir <- '/home'
   }
   source(file.path(home.dir, 'thomps23', 'ICUDelirium', 'BRAINICU', 'combine_brainmind_datasets.R'))
+  source(file.path(home.dir, 'thomps23', 'ICUDelirium', 'timevarying_data.r'))
+}
+
+```
+
+```{r functions_missingness}
+## -- Functions to describe amounts of missingness in a data set -----------------------------------
+## -- Calculate how many rows in a given data set are missing a specific variable ------------------
+covars.missing <- function(x,  ## string; variable to check
+                           df, ## data.frame; data set to check
+                           ## vector of covariates to check; defaults to all columns in df
+                           covar.list = names(df)){
+  ## Data set to use: unique() of all covariates (useful for time-varying data sets, where we only
+  ## want one instance of missingness per patient)
+  tmp <- unique(df[,covar.list])
+  
+  ## Number missing
+  nmiss <- sum(is.na(tmp[,x]))
+  
+  ## If there are no missings, return NA; otherwise, return "variable name: N (% rows)"
+  if(nmiss == 0){
+    return(NA)
+  } else{
+    ## If available, use variable label; otherwise, variable name
+    if(label(df[,x]) != ''){
+      vtext <- tolower(label(df[,x]))
+    } else{
+      vtext <- x
+    }
+    return(paste0(vtext, ': ', nmiss, ' (', round((nmiss / nrow(tmp))*100), '%)'))
+  }
+}
+
+## -- Paste all non-missing elements of covars.missing() results together to include in text -------
+paste.covars.missing <- function(miss.list){
+  if(all(is.na(miss.list))){
+    return('')
+  } else{
+    return(paste(miss.list[!is.na(miss.list)], collapse = '; '))
+  }
 }
 
 ```
@@ -119,6 +161,35 @@ all.oneobs <- upData(all.oneobs,
 
 ```
 
+```{r cuberoot_drugs}
+## -- Create cube root-transformed versions of drug variables in daily and summary data sets -------
+all.daily <- all.daily %>%
+  mutate(tot.benz.cube = tot.benz**(1/3),
+         tot.op.cube = tot.op**(1/3),
+         tot.prop.cube = tot.prop**(1/3),
+         tot.dex.cube = tot.dex**(1/3),
+         tot.hal.cube = tot.hal**(1/3))
+all.daily <- upData(all.daily,
+  labels = c(tot.benz.cube = '24h benzodiazepines, cube root',
+             tot.op.cube = '24h opioids, cube root',
+             tot.prop.cube = '24h propofol, cube root',
+             tot.dex.cube = '24h dexmedetomidine, cube root',
+             tot.hal.cube = '24h haloperidol, cube root'))
+
+all.oneobs <- all.oneobs %>%
+  mutate(mean.benz.cube = mean.benz.icu**(1/3),
+         mean.op.cube = mean.op.icu**(1/3),
+         mean.prop.cube = mean.prop.icu**(1/3),
+         mean.dex.cube = mean.dex.icu**(1/3),
+         mean.hal.cube = mean.hal.icu**(1/3))
+all.oneobs <- upData(all.oneobs,
+  labels = c(mean.benz.cube = 'Mean 24h benzodiazepines in ICU, cube root',
+             mean.op.cube = 'Mean 24h opioids in ICU, cube root',
+             mean.prop.cube = 'Mean 24h propofol in ICU, cube root',
+             mean.dex.cube = 'Mean 24h dexmedetomidine in ICU, cube root',
+             mean.hal.cube = 'Mean 24h haloperidol in ICU, cube root'))
+
+```
 # Description of Cohort
 ## Screening, Exclusions, Enrollment, and Patient Status
 `r table_nums('screentable', display = 'cite')` shows the number of patients screened, enrolled and
@@ -430,7 +501,7 @@ CAM+ but had a RASS > 0. A day could have both hypoactive and hyperactive deliri
 the patient was in the ICU and was delirious at both research staff assessments.
 
 ## Handling Missingness
-If patient-day had no mental status assessment on an in-hospital study day, we originally used
+If a patient had no mental status assessment on an in-hospital study day, we originally used
 single imputation to impute an overall status (normal, delirious or comatose), based on the status
 on the days immediately prior to and after the missing day. If a missing study day was assigned a
 normal or comatose status during single imputation, we assumed no hypoactive or hyperactive
@@ -844,3 +915,112 @@ html(mental.status.table, rmarkdown = TRUE, prmsd = TRUE, brmsd = TRUE,
      middle.bold = TRUE, msdsize = markupSpecs$html$smaller)
 
 ```
+
+# 12-Month Mortality
+We examined the association of the two motoric subtypes of delirium, and their potential
+modification of each other's effect, on mortality up to twelve months after study enrollment among
+both the entire cohort of enrolled patients and among patients who survived the hospital stay.
+
+## All Patients
+### Model Choice and Covariates
+When looking at the entire cohort, we used a time-varying Cox proportional hazards model in order to
+avoid immortal time bias, which occurs in our case when a patient had limited opportunity to
+experience either subtype of delirium (along with other covariates) because they had already died.
+Each ICU day is treated as a separate record; values from days of ICU discharge are carried forward
+either to the next ICU admission or until death or censoring. We included the following covariates:
+
+* Primary exposures
+    * Hyperactive delirium today (yes/no)
+    * Hypoactive delirium today (yes/no)
+    * Interaction between hypoactive and hyperactive delirium today
+* Baseline covariates
+    * Age at enrollment
+    * Years of education
+    * Charlson comorbidity index
+    * IQCODE
+* Daily ICU covariates
+    * Severe sepsis today (yes/no)
+    * Coma today (yes/no)
+    * Daily modified SOFA (no CNS component, as this is better reflected by coma and delirium)
+    * 24h dose of the following medications, all cube root transformed:
+        * Benzodiazepines (midazolam equivalents)
+        * Opioids (fentanyl equivalents)
+        * Propofol
+        * Dexmedetomidine
+        * Haloperidol
+        
+All continuous covariates will be allowed to have a nonlinear association with hazard of death,
+using restricted cubic splines, if event rates and covariate distribution allows. (For example, there are so many zero doses of haloperidol and dexmedetomidine that it is not feasible to use
+splines for these variables.) Degrees of freedom for each covariate will be noted in the model
+results table.
+
+```{r tv_both_datamgmt}
+## -- Create data set for time-varying Cox model, 12m endpoint -------------------------------------
+## Sets of covariates
+base.covars <- c('age.enroll', 'edu', 'charlson.score', 'iqcode.score.e')
+daily.icu.covars <- c('hyper.del.imp', 'hypo.del.imp', 'coma.today.imp', 'sevsepsis.l24',
+                      'daily.sofa.mod.locf', 'tot.benz.cube', 'tot.op.cube', 'tot.prop.cube',
+                      'tot.dex.cube', 'tot.hal.cube')
+
+## Get data set of all ICU days with daily covariates needed for models
+tv.daily.icu <- filter(all.daily, !is.na(icu.day) & icu.day == 'ICU') %>%
+  select(id, study.day, one_of(daily.icu.covars))
+
+```
+
+```{r death12m_all_datamgmt}
+## -- Data management for 12-month mortality model including all patients --------------------------
+## -- Create count process data set ----------------------------------------------------------------
+data.death.12.all <- timevarying.data(org.data = tv.daily.icu,
+                                      time.var = 'days.deathlast.365',
+                                      event.var = 'died.ever.365',
+                                      event.string = 'Died during first 365 days',
+                                      data.set = all.oneobs) %>%
+  left_join(select(all.oneobs, id, one_of(base.covars)), by = 'id')
+
+## -- Describe missingness -------------------------------------------------------------------------
+## Patients with no days of ICU data
+pts.miss.death.12.all <- setdiff(subset(all.pts, include.main)$id, unique(data.death.12.all$id))
+pttext.miss.death.12.all <- ifelse(length(pts.miss.death.12.all) == 0,
+                                   paste('All', n.included,
+                                         'patients with usable data were included in this analysis.'),
+                                   paste('Among all', n.included, 'patients with usable data,',
+                                         length(pts.miss.death.12.all),
+                                         'had no daily ICU data due to death or discharge on the same day as enrollment and were excluded from this analysis.'))
+
+## Missingness among covariates
+base.miss.death.12.all <- map_chr(base.covars, covars.missing,
+                                  df = data.death.12.all, covar.list = base.covars) %>%
+  paste.covars.missing()
+
+daily.miss.death.12.all <- map_chr(daily.icu.covars, covars.missing,
+                                   df = data.death.12.all, covar.list = daily.icu.covars) %>%
+  paste.covars.missing()
+
+## -- Create string describing missingness among covariates in 12m-mortality model, all pts -------
+any.miss.death.12.all <- !(base.miss.death.12.all == '' & daily.miss.death.12.all == '')
+if(!any.miss.death.12.all){
+  miss.death.12.all <- 'There was no missingness in any covariates used in the model.'
+} else{
+  if(base.miss.death.12.all != ''){
+    text.base.miss.death.12.all <- paste('among all unique patients -', base.miss.death.12.all)
+  } else{
+    text.base.miss.death.12.all <- ''
+  }
+  
+  if(daily.miss.death.12.all != ''){
+    text.daily.miss.death.12.all <- paste('among all patient-days -', daily.miss.death.12.all)
+  } else{
+    text.daily.miss.death.12.all <- ''
+  }
+  miss.death.12.all <- paste0("Missingness among model covariates was as follows: ",
+                              trim.spaces(paste(text.base.miss.death.12.all,
+                                                text.daily.miss.death.12.all,
+                                                collapse = '; ')),
+                              '.')
+}
+
+```
+
+### Missingness
+`r pttext.miss.death.12.all` `r miss.death.12.all`
