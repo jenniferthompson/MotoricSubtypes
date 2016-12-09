@@ -32,6 +32,7 @@ library(broom)
 library(pander)
 library(rms)
 library(mice)
+library(scales)
 library(plotly)
 
 options(grType = 'plotly')
@@ -54,9 +55,15 @@ table_nums(name = 'describe_followup', caption = 'RBANS and Trails B T-Scores, 3
 table_nums(name = 'describe_byasmt', caption = 'Status and Motoric Subtypes by Assessment')
 table_nums(name = 'describe_byday', caption = 'Status and Motoric Subtypes by Patient-Day')
 table_nums(name = 'describe_bypt', caption = 'Status and Motoric Subtypes by Patient')
+table_nums(name = 'results_death_inhosp',
+           caption = 'Motoric Subtypes and Other Covariates vs In-Hospital Mortality among All Patients')
 table_nums(name = 'results_death_12_all',
            caption = 'Motoric Subtypes and Other Covariates vs 12m Mortality among All Patients')
 
+figure_nums(name = 'zph_death_inhosp',
+            caption = 'Proportional Hazard Assumption, In-Hospital Mortality among All Patients')
+figure_nums(name = 'subtypehrs_death_inhosp',
+            caption = 'Hazard Ratios (95% CIs) for Motoric Subtypes, In-Hospital Mortality among All Patients')
 figure_nums(name = 'zph_death_12_all',
             caption = 'Proportional Hazard Assumption, 12m Mortality among All Patients')
 figure_nums(name = 'subtypehrs_death_12_all',
@@ -1005,18 +1012,17 @@ html(mental.status.table, rmarkdown = TRUE, prmsd = TRUE, brmsd = TRUE,
 
 ```
 
-# 12-Month Mortality
+# In-Hospital Mortality
 We examined the association of the two motoric subtypes of delirium, and their potential
-modification of each other's effect, on mortality up to twelve months after study enrollment among
-both the entire cohort of enrolled patients and among patients who survived the hospital stay.
+modification of each other's effect, on in-hospital mortality up to 30 days after study enrollment
+among both the entire cohort of enrolled patients.
 
-## All Patients
-### Model Choice and Covariates
-When looking at the entire cohort, we used a time-varying Cox proportional hazards model in order to
-avoid immortal time bias, which occurs in our case when a patient had limited opportunity to
-experience either subtype of delirium (along with other covariates) because they had already died.
-Each ICU day is treated as a separate record; values from days of ICU discharge are carried forward
-either to the next ICU admission or until death or censoring. We included the following covariates:
+## Model Choice and Covariates
+We used a time-varying Cox proportional hazards model in order to avoid immortal time bias, which
+occurs in our case when a patient had limited opportunity to experience either subtype of delirium
+(along with other covariates) because they had already died. Each ICU day is treated as a separate
+record; values from days of ICU discharge are carried forward either to the next ICU admission or
+until death or censoring. We included the following covariates:
 
 * Primary exposures
     * Hyperactive delirium today (yes/no)
@@ -1059,6 +1065,228 @@ tv.daily.icu <- filter(all.daily, !is.na(icu.day) & icu.day == 'ICU') %>%
 tv.shortlabs <- c("hypo.del.imp" = "Hypoactive", "hyper.del.imp" = "Hyperactive")
 
 ```
+
+```{r death_inhosp_all_datamgmt}
+## -- Data management for in-hospital mortality model including all patients -----------------------
+## -- Create count process data set ----------------------------------------------------------------
+data.death.inhosp <- timevarying.data(org.data = tv.daily.icu,
+                                      time.var = 'days.deathlast.inhosp.s',
+                                      event.var = 'died.ever.30',
+                                      event.string = 'Died during first 30 days',
+                                      data.set = all.oneobs) %>%
+  left_join(select(all.oneobs, id, one_of(base.covars)), by = 'id')
+
+## For some reason, factor labels don't transfer
+data.death.inhosp <- upData(data.death.inhosp,
+  labels = c(coma.today.imp = 'Coma today (imputed)',
+             hypo.del.imp = 'Hypoactive delirium today (imputed)',
+             hyper.del.imp = 'Hyperactive delirium today (imputed)'))
+
+## -- Describe missingness -------------------------------------------------------------------------
+## Patients with no days of ICU data
+pts.miss.death.inhosp <- setdiff(subset(all.pts, include.main)$id, unique(data.death.inhosp$id))
+pttext.miss.death.inhosp <- ifelse(length(pts.miss.death.inhosp) == 0,
+                                   paste('All', n.included,
+                                         'patients with usable data were included in this analysis.'),
+                                   paste('Among all', n.included, 'patients with usable data,',
+                                         length(pts.miss.death.inhosp),
+                                         'had no daily ICU data due to death or discharge on the same day as enrollment and were excluded from this analysis.'))
+
+## Missingness among covariates
+base.miss.death.inhosp <- map_chr(base.covars, covars.missing,
+                                  df = data.death.inhosp, covar.list = base.covars) %>%
+  paste.covars.missing()
+
+daily.miss.death.inhosp <- map_chr(daily.icu.covars, covars.missing,
+                                   df = data.death.inhosp,
+                                   covar.list = daily.icu.covars) %>%
+  paste.covars.missing()
+
+## -- Create string describing miss. among covariates in in-hospital-mortality model, all pts ------
+any.miss.death.inhosp <- !(base.miss.death.inhosp == '' & daily.miss.death.inhosp == '')
+if(!any.miss.death.inhosp){
+  miss.death.inhosp <- 'There was no missingness in any covariates used in the model.'
+} else{
+  if(base.miss.death.inhosp != ''){
+    text.base.miss.death.inhosp <- paste('among all unique patients -', base.miss.death.inhosp)
+  } else{
+    text.base.miss.death.inhosp <- ''
+  }
+  
+  if(daily.miss.death.inhosp != ''){
+    text.daily.miss.death.inhosp <- paste('among all patient-days -', daily.miss.death.inhosp)
+  } else{
+    text.daily.miss.death.inhosp <- ''
+  }
+  miss.death.inhosp <- paste0("Missingness among model covariates was as follows: ",
+                              trim.spaces(paste(text.base.miss.death.inhosp,
+                                                text.daily.miss.death.inhosp,
+                                                collapse = '; ')),
+                              '.')
+}
+
+```
+
+## Missingness
+`r pttext.miss.death.inhosp` `r miss.death.inhosp`
+
+Since there was so little missingness and multiple imputation with count process data is not
+trivial, we included only complete case records in this analysis.
+
+```{r death_inhosp_model}
+## Set datadist
+datadist.death.inhosp <- datadist(data.death.inhosp)
+options(datadist = 'datadist.death.inhosp')
+
+## Create Surv object for outcome
+Surv.death.inhosp <- with(data.death.inhosp, {
+  Surv(time = start.day, time2 = stop.day, event = as.numeric(died)) })
+
+## Fit model
+model.death.inhosp <- cph(Surv.death.inhosp ~ rcs(age.enroll, 3) + edu + iqcode.score.e +
+                            rcs(charlson.score, 3) + rcs(daily.sofa.mod.locf, 3) +
+                            rcs(tot.benz.cube, 3) + rcs(tot.op.cube, 3) + rcs(tot.prop.cube, 3) +
+                            tot.dex.cube + tot.hal.cube + coma.today.imp +
+                            hypo.del.imp*hyper.del.imp,
+                          data = data.death.inhosp,
+                          x = TRUE, y = TRUE)
+
+```
+
+## Model Assumptions
+We visually checked the assumptions of the Cox proportional hazards model by examining residuals
+over time. The assumption was met satisfactorily for each beta coefficient.
+
+```{r death_inhosp_assumptions, results = 'asis'}
+## -- Check proportional hazard assumption ---------------------------------------------------------
+zph.death.inhosp <- cox.zph(model.death.inhosp, transform = 'log')
+
+par(mfrow = c(1, 2))
+plot(zph.death.inhosp, col = 'red', lwd = 2)
+abline(v = 0, lty = 2, col = 'gray')
+par(mfrow = c(1, 1))
+
+```
+
+### Overall Model Results
+**General summary of motoric subtypes:** Having either motoric subtype of delirium on a given day
+seems to have no relationship with the hazard of in-hospital death in the 30 days following study
+enrollment when looking at the entire cohort of `r length(unique(data.death.inhosp$id))` patients
+with usable data. There is no significant interaction between the two motoric subtypes for this
+outcome.
+
+Results for all model covariates, adjusted to the median or mode of all other covariates, are
+presented in `r table_nums('results_death_inhosp', display = 'cite')`; due to the presence of
+interaction terms, it is important to note that in the table, hypoactive delirium is adjusted to
+`r as.character(datadist.death.inhosp$limits['Adjust to', 'hypo.del.imp'])` and hyperactive delirium
+is adjusted to `r as.character(datadist.death.inhosp$limits['Adjust to', 'hyper.del.imp'])`. More
+detailed hazard ratios for the two motoric subtypes are shown in `r figure_nums('subtypehrs_death_inhosp', display = 'cite')`.
+
+*Note on `r table_nums('results_death_inhosp', display = 'cite')`*: For continuous covariates,
+hazard ratios will be different depending on the points of comparison chosen, especially for
+covariates allowed to have a nonlinear relationship with the hazard of death (indicated by df > 1).
+We have chosen to compare the 75th percentile and the 25th percentile by default, since this is
+often a clinically relevant comparison. For variables with very skewed distributions, where those
+two percentiles are the same (eg, lots of zero drug doses), the points of comparison may be the
+maximum and minimum instead.
+
+```{r death_inhosp_results}
+## Data frame of model results
+results.death.inhosp <- model.results(model.death.inhosp,
+                                      data.set = data.death.inhosp,
+                                      short.label = tv.shortlabs,
+                                      print.format = 'plain',
+                                      add.stats = c("Model L.R.", "R2")) %>%
+  ital.rows()
+
+names(results.death.inhosp) <- c('Covariate', 'Reference\n(usu. 25th %ile)',
+                                 'Comparison\n(usu. 75th %ile)', 'Hazard ratio\n(95% CI)',
+                                 'X^2^', 'df', 'P')
+
+```
+
+```{r death_inhosp_results_print, results = 'asis'}
+pandoc.table(results.death.inhosp,
+             justify = c('left', rep('right', ncol(results.death.inhosp) - 1)),
+             split.cells = Inf, split.tables = Inf, keep.line.breaks = TRUE)
+
+```
+
+#### `r figure_nums('subtypehrs_death_inhosp')`
+```{r death_inhosp_plot}
+## -- Calculate HRs for each motoric subtype at each level of the other subtype --------------------
+tv.hrs.arglist <- list('est.var' = c(rep('hypo.del.imp', 2), rep('hyper.del.imp', 2)),
+                       'int.var' = c(rep('hyper.del.imp', 2), rep('hypo.del.imp', 2)),
+                       'int.adjust' = rep(c('No', 'Yes'), 2))
+
+hrs.death.inhosp <- pmap(tv.hrs.arglist,
+                         .f = estimate.with.interaction.rms,
+                         model.obj = 'model.death.inhosp') %>%
+  bind_rows() %>%
+  mutate(var.main.label = label(data.death.inhosp[,var.main]),
+         var.int.label = label(data.death.inhosp[,var.int]),
+         adjusted.to = paste(gsub(' .+', '', var.int.label), adjust.int, sep = ' = '))
+
+## Rename some variables since they'll show up in tooltips
+names(hrs.death.inhosp) <- gsub('effect', 'hr', names(hrs.death.inhosp))
+
+subtype.plot.death.inhosp <- ggplot(data = hrs.death.inhosp,
+                                    aes(x = adjusted.to, y = hr)) +
+  facet_wrap(~ var.main.label, ncol = 1, scales = 'free_y') +
+  geom_pointrange(aes(ymin = lowercl, ymax = uppercl)) +
+  geom_hline(yintercept = 1, linetype = 'dotted', colour = 'grey50') +
+  scale_x_discrete(name = '') +
+  scale_y_continuous(name = '', labels = comma) +
+  coord_flip() +
+  theme(axis.ticks.y = element_blank())
+
+```
+
+```{r death_inhosp_plot_print, results = 'asis', fig.width=8, fig.height=5}
+subtype.plot.death.inhosp %>%
+  ggplotly(tooltips = c('y', 'ymin', 'ymax', 'x')) %>%
+  layout(xaxis = list(title = 'Hazard Ratio (95% Confidence Interval)'),
+         margin = list(b = 40))
+
+```
+
+# 12-Month Mortality
+We examined the association of the two motoric subtypes of delirium, and their potential
+modification of each other's effect, on mortality up to twelve months after study enrollment among
+both the entire cohort of enrolled patients and among patients who survived the hospital stay.
+
+## All Patients
+### Model Choice and Covariates
+When looking at the entire cohort, we used a time-varying Cox proportional hazards model in order to
+avoid immortal time bias, which occurs in our case when a patient had limited opportunity to
+experience either subtype of delirium (along with other covariates) because they had already died.
+Each ICU day is treated as a separate record; values from days of ICU discharge are carried forward
+either to the next ICU admission or until death or censoring. We included the following covariates:
+
+* Primary exposures
+    * Hyperactive delirium today (yes/no)
+    * Hypoactive delirium today (yes/no)
+    * Interaction between hypoactive and hyperactive delirium today
+* Baseline covariates
+    * Age at enrollment
+    * Years of education
+    * Charlson comorbidity index
+    * IQCODE
+* Daily ICU covariates
+    * Severe sepsis today (yes/no)
+    * Coma today (yes/no)
+    * Daily modified SOFA (no CNS component, as this is better reflected by coma and delirium)
+    * 24h dose of the following medications, all cube root transformed:
+        * Benzodiazepines (midazolam equivalents)
+        * Opioids (fentanyl equivalents)
+        * Propofol
+        * Dexmedetomidine
+        * Haloperidol
+        
+All continuous covariates will be allowed to have a nonlinear association with hazard of death,
+using restricted cubic splines, if event rates and covariate distribution allows. (For example, there are so many zero doses of haloperidol and dexmedetomidine that it is not feasible to use
+splines for these variables.) Degrees of freedom for each covariate will be noted in the model
+results table.
 
 ```{r death_12_all_datamgmt}
 ## -- Data management for 12-month mortality model including all patients --------------------------
@@ -1207,10 +1435,6 @@ pandoc.table(results.death.12.all,
 #### `r figure_nums('subtypehrs_death_12_all')`
 ```{r death_12_all_plot}
 ## -- Calculate HRs for each motoric subtype at each level of the other subtype --------------------
-tv.hrs.arglist <- list('est.var' = c(rep('hypo.del.imp', 2), rep('hyper.del.imp', 2)),
-                       'int.var' = c(rep('hyper.del.imp', 2), rep('hypo.del.imp', 2)),
-                       'int.adjust' = rep(c('No', 'Yes'), 2))
-
 hrs.death.12.all <- pmap(tv.hrs.arglist,
                          .f = estimate.with.interaction.rms,
                          model.obj = 'model.death.12.all') %>%
