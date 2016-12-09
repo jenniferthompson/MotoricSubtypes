@@ -23,13 +23,16 @@ abstract: We describe the prevalence of both hypoactive and hyperactive delirium
 ```{r knitr_setup, echo = FALSE, message = FALSE}
 knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, results='hide')
 options(width = 200)
+goldenratio <- 1.61803398875
 ```
 
 ```{r general_setup, results='hide'}
 library(tidyverse)
+library(broom)
 library(pander)
 library(rms)
 library(mice)
+library(plotly)
 
 options(grType = 'plotly')
 
@@ -56,6 +59,8 @@ table_nums(name = 'results_death_12_all',
 
 figure_nums(name = 'zph_death_12_all',
             caption = 'Proportional Hazard Assumption, 12m Mortality among All Patients')
+figure_nums(name = 'subtypehrs_death_12_all',
+            caption = 'Hazard Ratios (95% CIs) for Motoric Subtypes, 12m Mortality among All Patients')
 
 ```
 
@@ -1157,9 +1162,25 @@ par(mfrow = c(1, 1))
 ```
 
 ### Overall Model Results
-After adjusting for other potential confounders, neither hypoactive or hyperactive delirium on a
-given patient-day was associated with a difference in the hazard of death in the twelve months after
-enrollment. Results for all model covariates are presented in `r table_nums('results_death_12_all', display = 'cite')`.
+**General summary of motoric subtypes:** Having either motoric subtype of delirium on a given day
+seems to have no relationship with the hazard of death in the 12 months following study enrollment
+when looking at the entire cohort of `r length(unique(data.death.12.all$id))` patients with usable
+data. There is no significant interaction between the two motoric subtypes for this outcome.
+
+Results for all model covariates, adjusted to the median or mode of all other covariates, are
+presented in `r table_nums('results_death_12_all', display = 'cite')`; due to the presence of
+interaction terms, it is important to note that in the table, hypoactive delirium is adjusted to
+`r as.character(datadist.death.12.all$limits['Adjust to', 'hypo.del.imp'])` and hyperactive delirium
+is adjusted to `r as.character(datadist.death.12.all$limits['Adjust to', 'hyper.del.imp'])`. More
+detailed hazard ratios for the two motoric subtypes are shown in `r figure_nums('subtypehrs_death_12_all', display = 'cite')`.
+
+*Note on `r table_nums('results_death_12_all', display = 'cite')`*: For continuous covariates,
+hazard ratios will be different depending on the points of comparison chosen, especially for
+covariates allowed to have a nonlinear relationship with the hazard of death (indicated by df > 1).
+We have chosen to compare the 75th percentile and the 25th percentile by default, since this is
+often a clinically relevant comparison. For variables with very skewed distributions, where those
+two percentiles are the same (eg, lots of zero drug doses), the points of comparison may be the
+maximum and minimum instead.
 
 ```{r death_12_all_results}
 ## Data frame of model results
@@ -1183,3 +1204,41 @@ pandoc.table(results.death.12.all,
 
 ```
 
+#### `r figure_nums('subtypehrs_death_12_all')`
+```{r death_12_all_plot}
+## -- Calculate HRs for each motoric subtype at each level of the other subtype --------------------
+tv.hrs.arglist <- list('est.var' = c(rep('hypo.del.imp', 2), rep('hyper.del.imp', 2)),
+                       'int.var' = c(rep('hyper.del.imp', 2), rep('hypo.del.imp', 2)),
+                       'int.adjust' = rep(c('No', 'Yes'), 2))
+
+hrs.death.12.all <- pmap(tv.hrs.arglist,
+                         .f = estimate.with.interaction.rms,
+                         model.obj = 'model.death.12.all') %>%
+  bind_rows() %>%
+  mutate(var.main.label = label(data.death.12.all[,var.main]),
+         var.int.label = label(data.death.12.all[,var.int]),
+         adjusted.to = paste(gsub(' .+', '', var.int.label), adjust.int, sep = ' = '))
+
+## Rename some variables since they'll show up in tooltips
+names(hrs.death.12.all) <- gsub('effect', 'hr', names(hrs.death.12.all))
+
+subtype.plot.death.12.all <- ggplot(data = hrs.death.12.all,
+                                    aes(x = adjusted.to, y = hr)) +
+  facet_wrap(~ var.main.label, ncol = 1, scales = 'free_y') +
+  geom_pointrange(aes(ymin = lowercl, ymax = uppercl)) +
+  geom_hline(yintercept = 1, linetype = 'dotted', colour = 'grey50') +
+  scale_x_discrete(name = '') +
+  scale_y_continuous(name = '',
+                     breaks = seq(0, ceiling(max(hrs.death.12.all$uppercl)), by = 1)) +
+  coord_flip() +
+  theme(axis.ticks.y = element_blank())
+
+```
+
+```{r death_12_all_plot_print, results = 'asis', fig.width=8, fig.height=5}
+subtype.plot.death.12.all %>%
+  ggplotly(tooltips = c('y', 'ymin', 'ymax', 'x')) %>%
+  layout(xaxis = list(title = 'Hazard Ratio (95% Confidence Interval)'),
+         margin = list(b = 40))
+
+```
