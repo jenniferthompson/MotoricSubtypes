@@ -123,6 +123,61 @@ paste.covars.missing <- function(miss.list){
 
 ```
 
+```{r functions_tidying}
+## -- Function to get estimates, on original or ratio scale, for a main variable at a given --------
+## -- level of another variable using summary.rms(). Returns a tidy data frame with columns for ----
+## -- main and interacting variable names and levels and numeric columns for effects and CIs. ------
+estimate.with.interaction.rms <-
+  function(model.obj,         ## character string; name of rms model object
+           est.var,           ## string; name of variable for which we want estimate/CI
+           int.var,           ## string; name of interacting variable
+           int.adjust,        ## character or numeric; value to adjust interacting var. to
+           want.ratios = NULL ## Want ratios (odds, hazard, IRR)?
+           ){
+    
+  ## If no value for want.ratios is given, use default based on model type:
+  ## Logistic, Cox = yes; all others = no
+  if(is.null(want.ratios)){
+    want.ratios <- length(match.arg(class(get(model.obj)), c('lrm', 'cph'), several.ok = TRUE)) > 0
+  }
+  
+  ## If value for interaction term is character, need to add a set of quotes to use in sprintf()
+  if(!is.numeric(int.adjust)){
+    int.adjust.summary <- paste0("'", int.adjust, "'")
+  }
+  
+  ## Use summary.rms() to calculate desired estimate
+  summary.text <- sprintf("summary(%s, %s, %s = %s, est.all = FALSE, antilog = FALSE)",
+                          model.obj, est.var, int.var, int.adjust.summary)
+  summary.obj <- eval(parse(text = summary.text))
+  
+  ## Use broom to make into a data frame, selecting only row with desired variable, and adding
+  ## value that interacting variable is adjusted to
+  summary.data <- summary.obj %>%
+    tidy() %>%
+    separate(.rownames, into = c('var.main', 'comp.level', 'ref.level'), sep = " - |:") %>%
+    filter(var.main == est.var) %>%
+    mutate(var.int = int.var,
+           adjust.int = int.adjust) %>%
+    ## General cleanup: don't need SE, Type, numeric Low/High columns
+    select(var.main, ref.level, comp.level, var.int, adjust.int,
+           Effect, Lower.0.95, Upper.0.95)
+  
+  ## Change variable names to make easier to work with
+  names(summary.data) <- tolower(gsub('\\.0\\.95', 'cl', names(summary.data)))
+  
+  ## If we want ratios, exponentiate effect and CLs
+  if(want.ratios){
+    summary.data[,c('effect', 'lowercl', 'uppercl')] <-
+      exp(summary.data[,c('effect', 'lowercl', 'uppercl')])
+  }
+  
+  return(summary.data)
+
+}
+
+```
+
 ```{r functions_formatting}
 ## -- Function to manually italicize rows in a model results table ---------------------------------
 ## -- (emphasize.italics.rows doesn't seem to work) ------------------------------------------------
