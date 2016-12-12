@@ -72,7 +72,7 @@ figure_nums(name = 'subtypehrs_death_12_all',
             caption = 'Hazard Ratios (95% CIs) for Motoric Subtypes, 12m Mortality among All Patients')
 figure_nums(name = 'zph_death_12_surv',
             caption = 'Proportional Hazard Assumption, 12m Mortality among Hospital Survivors')
-figure_nums(name = 'subtypehrs_death_12_all',
+figure_nums(name = 'subtypehrs_death_12_surv',
             caption = 'Hazard Ratios (95% CIs) for Motoric Subtypes, 12m Mortality among Hospital Survivors')
 
 ```
@@ -176,10 +176,15 @@ estimate.with.interaction.rms <-
   ## value that interacting variable is adjusted to
   summary.data <- summary.obj %>%
     tidy() %>%
-    separate(.rownames, into = c('var.main', 'comp.level', 'ref.level'), sep = " - |:") %>%
+    separate(.rownames,
+             into = c('var.main', 'comp.level', 'ref.level'),
+             sep = " - |:",
+             fill = 'right') %>%
     filter(var.main == est.var) %>%
     mutate(var.int = int.var,
-           adjust.int = int.adjust) %>%
+           adjust.int = int.adjust,
+           comp.level = ifelse(is.na(comp.level), High, comp.level),
+           ref.level = ifelse(is.na(ref.level), Low, ref.level)) %>%
     ## General cleanup: don't need SE, Type, numeric Low/High columns
     select(var.main, ref.level, comp.level, var.int, adjust.int,
            Effect, Lower.0.95, Upper.0.95)
@@ -1178,7 +1183,7 @@ par(mfrow = c(1, 1))
 
 ```
 
-### Overall Model Results
+## Overall Model Results
 **General summary of motoric subtypes:** Having either motoric subtype of delirium on a given day
 seems to have no relationship with the hazard of in-hospital death in the 30 days following study
 enrollment when looking at the entire cohort of `r length(unique(data.death.inhosp$id))` patients
@@ -1641,5 +1646,25 @@ surv.hrs.arglist <- list(est.var = c(rep('days.hypodel.imp', length(quants.hyper
                                      rep('days.hypodel.imp', length(quants.hypodel.surv))),
                          int.adjust = c(quants.hyperdel.surv, quants.hypodel.surv))
 
-## == NEED TO REWORK ESTIMATE.WITH.INTERACTION.RMS() TO WORK WITH CONTINUOUS COVARIATES ============
+hrs.death.12.surv <- pmap(surv.hrs.arglist,
+                          .f = estimate.with.interaction.rms,
+                          model.obj = 'model.death.12.surv') %>%
+  bind_rows() %>%
+  mutate(var.main.label = label(data.death.12.surv[,var.main]),
+         var.int.label = label(data.death.12.surv[,var.int]),
+         adjusted.to = paste(gsub(' .+', '', var.int.label), adjust.int, sep = ' = '))
+
+# ## Rename some variables since they'll show up in tooltips
+# names(hrs.death.inhosp) <- gsub('effect', 'hr', names(hrs.death.inhosp))
+# 
+# subtype.plot.death.inhosp <- ggplot(data = hrs.death.inhosp,
+#                                     aes(x = adjusted.to, y = hr)) +
+#   facet_wrap(~ var.main.label, ncol = 1, scales = 'free_y') +
+#   geom_pointrange(aes(ymin = lowercl, ymax = uppercl)) +
+#   geom_hline(yintercept = 1, linetype = 'dotted', colour = 'grey50') +
+#   scale_x_discrete(name = '') +
+#   scale_y_continuous(name = '', labels = comma) +
+#   coord_flip() +
+#   theme(axis.ticks.y = element_blank())
+
 ```
