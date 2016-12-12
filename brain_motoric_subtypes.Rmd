@@ -148,12 +148,37 @@ paste.covars.missing <- function(miss.list){
 estimate.with.interaction.rms <-
   function(model.obj,  ## character string; name of rms model object
            est.var,    ## string; name of variable for which we want estimate/CI
-           #est.vals,   ## comparison wanted for main variable; default = datadist() defaults
+           est.vals,   ## comparison wanted for main variable; default = datadist() defaults
            int.var,    ## string; name of interacting variable
            int.adjust, ## character or numeric; value to adjust interacting var. to
            want.ratios ## Want ratios (odds, hazard, IRR)?
            ){
   
+  ## If no values for est.vals are given, use datadist defaults
+  if(missing(est.vals)){
+    dd <- get(getOption('datadist'))
+    ## First choice is Low/High:effect values, used for numeric variables
+    estvar.Low <- dd$limits['Low:effect', est.var]
+    estvar.High <- dd$limits['High:effect', est.var]
+    ## If variable is not numeric, these values are missing; use Low/High instead
+    if(is.na(estvar.Low)){
+      estvar.Low <- dd$limits['Low', est.var]
+      estvar.High <- dd$limits['High', est.var]
+    }
+  ## If est.vals is given, must be a vector of length 2
+  } else if(length(est.vals) != 2){
+    stop('est.vals must be a vector of length 2', call. = FALSE)
+  } else{
+    estvar.Low <- est.vals[1]
+    estvar.High <- est.vals[2]
+  }
+    
+  ## If variable is a character or factor, add extra quotes for inclusion in sprintf()
+  if(!is.numeric(estvar.Low)){
+    estvar.Low <- paste0("'", estvar.Low, "'")
+    estvar.High <- paste0("'", estvar.High, "'")
+  }
+    
   ## If no value for want.ratios is given, use default based on model type:
   ## Logistic, Cox = yes; all others = no
   if(missing(want.ratios)){
@@ -168,8 +193,8 @@ estimate.with.interaction.rms <-
   }
   
   ## Use summary.rms() to calculate desired estimate
-  summary.text <- sprintf("summary(%s, %s, %s = %s, est.all = FALSE, antilog = FALSE)",
-                          model.obj, est.var, int.var, int.adjust.summary)
+  summary.text <- sprintf("summary(%s, %s = c(%s, %s), %s = %s, est.all = FALSE, antilog = FALSE)",
+                          model.obj, est.var, estvar.Low, estvar.High, int.var, int.adjust.summary)
   summary.obj <- eval(parse(text = summary.text))
   
   ## Use broom to make into a data frame, selecting only row with desired variable, and adding
@@ -1238,7 +1263,8 @@ hrs.death.inhosp <- pmap(tv.hrs.arglist,
                          .f = estimate.with.interaction.rms,
                          model.obj = 'model.death.inhosp') %>%
   bind_rows() %>%
-  mutate(var.main.label = label(data.death.inhosp[,var.main]),
+  mutate(var.main.label = paste(gsub(' \\(imputed\\)', '', label(data.death.inhosp[,var.main])),
+                                'vs. none'),
          var.int.label = label(data.death.inhosp[,var.int]),
          adjusted.to = paste(gsub(' .+', '', var.int.label), adjust.int, sep = ' = '))
 
@@ -1454,7 +1480,8 @@ hrs.death.12.all <- pmap(tv.hrs.arglist,
                          .f = estimate.with.interaction.rms,
                          model.obj = 'model.death.12.all') %>%
   bind_rows() %>%
-  mutate(var.main.label = label(data.death.12.all[,var.main]),
+  mutate(var.main.label = paste(gsub(' \\(imputed\\)', '', label(data.death.12.all[,var.main])),
+                                'vs. none'),
          var.int.label = label(data.death.12.all[,var.int]),
          adjusted.to = paste(gsub(' .+', '', var.int.label), adjust.int, sep = ' = '))
 
@@ -1640,8 +1667,20 @@ adjto.probs <- c(0, 0.25, 0.5, 0.75, 0.90)
 quants.hypodel.surv <- unique(quantile(data.death.12.surv$days.hypodel.imp, probs = adjto.probs))
 quants.hyperdel.surv <- unique(quantile(data.death.12.surv$days.hyperdel.imp, probs = adjto.probs))
 
+## Get datadist defaults for days of hypoactive and hyperactive delirium;
+## if not explicitly specified, summary.rms() thinks days.hyperdel.imp is a factor...?
+## Defaults for days.hyperdel.imp are min and max. Use 0 and 90th %ile instead.
+lowhigh.hypo.surv <- c(datadist.death.12.surv$limits['Low:effect', 'days.hypodel.imp'],
+                       datadist.death.12.surv$limits['High:effect', 'days.hypodel.imp'])
+lowhigh.hyper.surv <- c(0,
+                        quantile(data.death.12.surv$days.hyperdel.imp, probs = 0.9, na.rm = TRUE))
+
 surv.hrs.arglist <- list(est.var = c(rep('days.hypodel.imp', length(quants.hyperdel.surv)),
                                      rep('days.hyperdel.imp', length(quants.hypodel.surv))),
+                         est.vals = c(replicate(length(quants.hyperdel.surv),
+                                                lowhigh.hypo.surv, simplify = FALSE),
+                                      replicate(length(quants.hypodel.surv),
+                                                lowhigh.hyper.surv, simplify = FALSE)),
                          int.var = c(rep('days.hyperdel.imp', length(quants.hyperdel.surv)),
                                      rep('days.hypodel.imp', length(quants.hypodel.surv))),
                          int.adjust = c(quants.hyperdel.surv, quants.hypodel.surv))
@@ -1650,21 +1689,32 @@ hrs.death.12.surv <- pmap(surv.hrs.arglist,
                           .f = estimate.with.interaction.rms,
                           model.obj = 'model.death.12.surv') %>%
   bind_rows() %>%
-  mutate(var.main.label = label(data.death.12.surv[,var.main]),
+  mutate(var.main.label = paste(comp.level, 'vs.', ref.level,
+                                tools::toTitleCase(label(data.death.12.surv[,var.main]))),
          var.int.label = label(data.death.12.surv[,var.int]),
-         adjusted.to = paste(gsub(' .+', '', var.int.label), adjust.int, sep = ' = '))
+         adjusted.to = factor(1:n(),
+                              labels = paste(gsub(' delirium', '', gsub('of ', '', var.int.label)),
+                                             adjust.int, sep = ' = ')))
 
-# ## Rename some variables since they'll show up in tooltips
-# names(hrs.death.inhosp) <- gsub('effect', 'hr', names(hrs.death.inhosp))
-# 
-# subtype.plot.death.inhosp <- ggplot(data = hrs.death.inhosp,
-#                                     aes(x = adjusted.to, y = hr)) +
-#   facet_wrap(~ var.main.label, ncol = 1, scales = 'free_y') +
-#   geom_pointrange(aes(ymin = lowercl, ymax = uppercl)) +
-#   geom_hline(yintercept = 1, linetype = 'dotted', colour = 'grey50') +
-#   scale_x_discrete(name = '') +
-#   scale_y_continuous(name = '', labels = comma) +
-#   coord_flip() +
-#   theme(axis.ticks.y = element_blank())
+## Rename some variables since they'll show up in tooltips
+names(hrs.death.12.surv) <- gsub('effect', 'hr', names(hrs.death.12.surv))
+
+subtype.plot.death.12.surv <- ggplot(data = hrs.death.12.surv,
+                                     aes(x = adjusted.to, y = hr)) +
+  facet_wrap(~ var.main.label, ncol = 1, scales = 'free_y') +
+  geom_pointrange(aes(ymin = lowercl, ymax = uppercl)) +
+  geom_hline(yintercept = 1, linetype = 'dotted', colour = 'grey50') +
+  scale_x_discrete(name = '') +
+  scale_y_continuous(name = '', labels = comma) +
+  coord_flip() +
+  theme(axis.ticks.y = element_blank())
+
+```
+
+```{r death_12_surv_plot_print, results = 'asis', fig.width=8, fig.height=7}
+subtype.plot.death.12.surv %>%
+  ggplotly(tooltips = c('y', 'ymin', 'ymax', 'x')) %>%
+  layout(xaxis = list(title = 'Hazard Ratio (95% Confidence Interval)'),
+         margin = list(b = 40))
 
 ```
