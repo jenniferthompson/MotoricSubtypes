@@ -61,6 +61,7 @@ table_nums(name = 'results_death_12_all',
            caption = 'Motoric Subtypes and Other Covariates vs 12m Mortality among All Patients')
 table_nums(name = 'results_death_12_surv',
            caption = 'Motoric Subtypes and Other Covariates vs 12m Mortality among Hospital Survivors')
+table_nums(name = 'cognitive_missing', caption = 'Missingness for Cognitive Outcome Models')
 
 figure_nums(name = 'zph_death_inhosp',
             caption = 'Proportional Hazard Assumption, In-Hospital Mortality among All Patients')
@@ -1718,3 +1719,63 @@ subtype.plot.death.12.surv %>%
          margin = list(b = 40))
 
 ```
+
+# Missingness for Cognitive Outcomes
+
+Missingness in the case of our long-term cognitive outcomes is very likely informative: patients who
+are more likely to do worse on cognitive testing are very possibly those most likely to not be
+tested at all, due to being too tired or sick to complete the assessment, re-hospitalizations, etc.
+In order to reduce bias from this missingness, we will use multiple imputation for all covariates
+and all cognitive outcomes, including all patients with at least partial cognitive testing at a
+given time point. The amounts of missingness for each time point, covariate and outcome are shown in `r table_nums('cognitive_missing', display = 'cite')`. (Variables not shown are completely present.)
+
+```{r cognitive_datamgmt}
+## -- Create data sets for 3m, 12m outcomes --------------------------------------------------------
+cog.outcome.pref <- c('rbans.global.score', 'trail.b.tscore')
+cog.outcomes.3 <- paste0(cog.outcome.pref, '.3')
+cog.outcomes.12 <- paste0(cog.outcome.pref, '.12')
+
+data.cog.3 <- all.oneobs %>%
+  filter(id %in% ltpts.3m) %>%
+  select(id, one_of(cog.outcomes.3), one_of(cog.outcomes.12),
+         one_of(base.covars), one_of(hosp.covars))
+
+data.cog.12 <- all.oneobs %>%
+  filter(id %in% ltpts.12m) %>%
+  select(id, one_of(cog.outcomes.3), one_of(cog.outcomes.12),
+         one_of(base.covars), one_of(hosp.covars))
+
+```
+
+```{r cognitive_missing}
+cog.variables.3 <- c(cog.outcomes.3, base.covars, hosp.covars)
+cog.variables.12 <- c(cog.outcomes.12, base.covars, hosp.covars)
+
+miss.cog.3 <- map_chr(cog.variables.3, covars.missing,
+                      df = data.cog.3, covar.list = cog.variables.3)
+miss.cog.12 <- map_chr(cog.variables.12, covars.missing,
+                       df = data.cog.12, covar.list = cog.variables.12)
+
+miss.cog <- data.frame(variable = map_chr(cog.variables.3, ~ label(data.cog.3[,.])),
+                       miss.3 = miss.cog.3,
+                       miss.12 = miss.cog.12) %>%
+  filter(!is.na(miss.3) | !is.na(miss.12)) %>%
+  mutate(variable = gsub(' on| during.*', '', gsub(',.*$', '', variable)),
+         miss.3 = ifelse(is.na(miss.3), '0 (0%)', gsub('.*:', '', miss.3)),
+         miss.12 = ifelse(is.na(miss.12), '0 (0%)', gsub('.*:', '', miss.12)))
+
+names(miss.cog) <- c('Variable',
+                     paste('3 Months\\\nN =', length(ltpts.3m)),
+                     paste('12 Months\\\nN =', length(ltpts.12m)))
+
+```
+
+#### `r table_nums('cognitive_missing')`
+```{r print_cognitive_missing, results = 'asis'}
+pandoc.table(miss.cog,
+             justify = c('left', 'right', 'right'), split.cells = Inf, split.table = Inf,
+             keep.line.breaks = TRUE)
+
+```
+
+The vast majority of missingness is from the outcome variables themselves.
