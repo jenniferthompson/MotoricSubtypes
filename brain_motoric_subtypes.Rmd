@@ -21,7 +21,7 @@ abstract: We describe the prevalence of both hypoactive and hyperactive delirium
 ---
 
 ```{r knitr_setup, echo = FALSE, message = FALSE}
-knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, results='hide')
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, results='hide', fig.width = 8)
 options(width = 200)
 goldenratio <- 1.61803398875
 ```
@@ -40,6 +40,9 @@ options(grType = 'plotly')
 ## Spacing for pandoc tables
 space.3 <- paste(rep("&nbsp;", 3), collapse = '')
 space.6 <- paste(rep("&nbsp;", 6), collapse = '')
+
+## Nate likes this navy
+nate.navy <- "#003D79"
 
 ## -- Set up figure, table numbering using the captioner package -----------------------------------
 library(captioner)
@@ -75,6 +78,8 @@ figure_nums(name = 'zph_death_12_surv',
             caption = 'Proportional Hazard Assumption, 12m Mortality among Hospital Survivors')
 figure_nums(name = 'subtypehrs_death_12_surv',
             caption = 'Hazard Ratios (95% CIs) for Motoric Subtypes, 12m Mortality among Hospital Survivors')
+figure_nums(name = 'hypo_rbans', caption = 'Hypoactive Delirium vs Global Cognition')
+figure_nums(name = 'hyper_rbans', caption = 'Hyperactive Delirium vs Global Cognition')
 
 ```
 
@@ -234,7 +239,7 @@ estimate.with.interaction.rms <-
 ## -- Function to manually italicize rows in a model results table ---------------------------------
 ## -- (emphasize.italics.rows doesn't seem to work) ------------------------------------------------
 ital.rows <- function(modresults){
-  ital.these <- which(modresults[,'pval'] == '')
+  ital.these <- which(modresults[,'df'] == '')
   for(i in ital.these){
     for(j in 1:ncol(modresults)){
       if(modresults[i,j] != ''){
@@ -243,6 +248,18 @@ ital.rows <- function(modresults){
     }
   }
   modresults
+}
+
+## -- Function to "move" model stats to estimate/CI column to prep for merging ---------------------
+move.stats <- function(df){
+  df %>%
+    mutate(est.ci = ifelse(low != '' & high == '', low, est.ci),
+           low = ifelse(low != '' & high == '', '', low))
+}
+
+## -- Function to insert line breaks between point estimates and confidence limits -----------------
+ci.newline <- function(df){
+  df %>% mutate(est.ci = gsub(' (', '\\\n(', est.ci, fixed = TRUE))
 }
 
 ```
@@ -1275,7 +1292,7 @@ names(hrs.death.inhosp) <- gsub('effect', 'hr', names(hrs.death.inhosp))
 subtype.plot.death.inhosp <- ggplot(data = hrs.death.inhosp,
                                     aes(x = adjusted.to, y = hr)) +
   facet_wrap(~ var.main.label, ncol = 1, scales = 'free_y') +
-  geom_pointrange(aes(ymin = lowercl, ymax = uppercl)) +
+  geom_pointrange(aes(ymin = lowercl, ymax = uppercl), colour = nate.navy) +
   geom_hline(yintercept = 1, linetype = 'dotted', colour = 'grey50') +
   scale_x_discrete(name = '') +
   scale_y_continuous(name = '', labels = comma) +
@@ -1492,7 +1509,7 @@ names(hrs.death.12.all) <- gsub('effect', 'hr', names(hrs.death.12.all))
 subtype.plot.death.12.all <- ggplot(data = hrs.death.12.all,
                                     aes(x = adjusted.to, y = hr)) +
   facet_wrap(~ var.main.label, ncol = 1, scales = 'free_y') +
-  geom_pointrange(aes(ymin = lowercl, ymax = uppercl)) +
+  geom_pointrange(aes(ymin = lowercl, ymax = uppercl), colour = nate.navy) +
   geom_hline(yintercept = 1, linetype = 'dotted', colour = 'grey50') +
   scale_x_discrete(name = '') +
   scale_y_continuous(name = '',
@@ -1703,7 +1720,7 @@ names(hrs.death.12.surv) <- gsub('effect', 'hr', names(hrs.death.12.surv))
 subtype.plot.death.12.surv <- ggplot(data = hrs.death.12.surv,
                                      aes(x = adjusted.to, y = hr)) +
   facet_wrap(~ var.main.label, ncol = 1, scales = 'free_y') +
-  geom_pointrange(aes(ymin = lowercl, ymax = uppercl)) +
+  geom_pointrange(aes(ymin = lowercl, ymax = uppercl), colour = nate.navy) +
   geom_hline(yintercept = 1, linetype = 'dotted', colour = 'grey50') +
   scale_x_discrete(name = '') +
   scale_y_continuous(name = '', labels = comma) +
@@ -1745,6 +1762,23 @@ data.cog.12 <- all.oneobs %>%
   select(id, one_of(cog.outcomes.3), one_of(cog.outcomes.12),
          one_of(base.covars), one_of(hosp.covars))
 
+## -- Set datadist, using patients with data at either/both time points ----------------------------
+datadist.cog <- datadist(all.oneobs[all.oneobs$id %in% ltpts.either,
+                                    c(cog.outcomes.3, cog.outcomes.12, base.covars, hosp.covars)])
+options(datadist = 'datadist.cog')
+
+## -- Shorten variable labels in data.cog.3 (we'll use this for model.results()) -------------------
+data.cog.3 <- upData(data.cog.3,
+  labels = c(coma.s.imp = 'Days of coma',
+             icudays.sevseptic.s = 'Days of severe sepsis',
+             iqcode.score.e = 'IQCODE',
+             mean.benz.cube = 'Mean 24h benzos, cube root',
+             mean.op.cube = 'Mean 24h opioids, cube root',
+             mean.prop.cube = 'Mean 24h propofol, cube root',
+             mean.dex.cube = 'Mean 24h dex, cube root',
+             mean.hal.cube = 'Mean 24h haldol, cube root',
+             mean.modsofa.icu = 'Mean modified SOFA'))
+
 ```
 
 ```{r cognitive_missing}
@@ -1778,4 +1812,196 @@ pandoc.table(miss.cog,
 
 ```
 
-The vast majority of missingness is from the outcome variables themselves.
+The vast majority of missingness is from the outcome variables themselves. To handle this and reduce
+bias resulting from a complete case analysis, we will use multiple imputation (predictive mean
+matching) in all cognitive outcome models.
+
+```{r cognitive_imputation}
+## -- Create aregImpute() objects for 3, 12m followup data sets ------------------------------------
+areg.formula <- as.formula("~ rbans.global.score.3 + rbans.global.score.12 + trail.b.tscore.3 + trail.b.tscore.12 + age.enroll + I(edu) + charlson.score + I(iqcode.score.e) + I(days.hyperdel.imp) + I(days.hypodel.imp) + icudays.sevseptic.s + I(coma.s.imp) + mean.modsofa.icu + mean.benz.cube + mean.op.cube + mean.prop.cube + I(mean.dex.cube) + I(mean.hal.cube)")
+
+set.seed(65)
+areg.cog.3 <- aregImpute(areg.formula, data = data.cog.3)
+areg.cog.12 <- aregImpute(areg.formula, data = data.cog.12)
+
+```
+
+# RBANS Global Scores (Global Cognition)
+
+We wanted to explore whether durations of the two motoric delirium subtypes were associated with
+global cognition among patients who were tested at 3 and 12 months after hospital discharge.
+
+## Model Choice and Covariates
+Based on extensive previous analyses using this outcome, we chose a linear regression model for both
+time points. All our covariates were either measured at baseline or are summary variables reflecting
+the entire ICU stay.
+
+* Primary exposures
+    * Days of hyperactive delirium during the hospitalization
+    * Days of hypoactive delirium during the hospitalization
+    * Interaction between days of hypoactive and hyperactive delirium
+* Baseline covariates
+    * Age at enrollment
+    * Years of education
+    * Charlson comorbidity index
+    * IQCODE
+* ICU/hospitalization covariates
+    * Days of severe sepsis
+    * Days of coma
+    * Mean daily modified SOFA (no CNS component, as this is better reflected by coma and delirium)
+    * Mean 24h dose in the ICU of the following medications, all cube root transformed:
+        * Benzodiazepines (midazolam equivalents)
+        * Opioids (fentanyl equivalents)
+        * Propofol
+        * Dexmedetomidine
+        * Haloperidol
+        
+All continuous covariates will be allowed to have a nonlinear association with hazard of death,
+using restricted cubic splines, if event rates and covariate distribution allows. (For example, there are so many zero doses of haloperidol and dexmedetomidine that it is not feasible to use
+splines for these variables.) Degrees of freedom for each covariate will be noted in the model
+results table.
+
+```{r model_rbans}
+## -- Fit RBANS models -----------------------------------------------------------------------------
+## String for righthand side of all cognitive models
+cog.independent <- "rcs(age.enroll, 3) + edu + rcs(charlson.score, 3) + iqcode.score.e + rcs(icudays.sevseptic.s, 3) + rcs(coma.s.imp, 3) + rcs(mean.modsofa.icu, 3) + rcs(mean.benz.cube, 3) + rcs(mean.op.cube, 3) + rcs(mean.prop.cube, 3) + mean.dex.cube + mean.hal.cube + rcs(days.hypodel.imp, 3) * days.hyperdel.imp"
+
+## Function to fit linear regression models using fit.mult.impute()
+fmi.ols <- function(outcome, df, aregobj){
+  modform <- as.formula(paste(outcome, cog.independent, sep = ' ~ '))
+  fit.mult.impute(modform, data = df, xtrans = aregobj, fitter = ols, x = TRUE, y = TRUE)
+}
+
+## Argument list for RBANS models
+rbans.arglist <- list(outcome = c('rbans.global.score.3', 'rbans.global.score.12'),
+                      df = list(data.cog.3, data.cog.12),
+                      aregobj = list(areg.cog.3, areg.cog.12))
+
+models.rbans <- pmap(rbans.arglist, fmi.ols)
+
+```
+
+## Overall Results
+**General summary of motoric subtypes:** A longer duration of hypoactive delirium is significantly associated with worse global cognition scores at both three and twelve months after hospital discharge; this association is nonlinear, so please see `r figure_nums('hypo_rbans', display = 'cite')` for the full effect. Duration of hyperactive delirium is marginally associated with global cognition at three months, but not at twelve months; it is impossible to know if there is a true effect which we can't see due to low amounts of hyperactive delirium, or whether there truly is no association. There is no significant interaction between the two motoric subtypes for this
+outcome.
+
+Results for all model covariates, adjusted to the median or mode of all other covariates, are
+presented in `r table_nums('results_rbans', display = 'cite')`; due to the presence of
+interaction terms, it is important to note that in the table, hypoactive delirium is adjusted to
+`r as.character(datadist.cog$limits['Adjust to', 'days.hypodel.imp'])` days and hyperactive delirium
+is adjusted to `r as.character(datadist.cog$limits['Adjust to', 'days.hyperdel.imp'])` days. `r figure_nums('hypo_rbans', display = 'cite')` and `r figure_nums('hyper_rbans', display = 'cite')` show the association of each motoric subtype and global cognition, adjusted to various amounts of the other subtype.
+
+*Note on `r table_nums('results_rbans', display = 'cite')`*: For continuous covariates,
+differences in scores will be different depending on the points of comparison chosen, especially for
+covariates allowed to have a nonlinear relationship with the test score (indicated by df > 1).
+We have chosen to compare the 75th percentile and the 25th percentile by default, since this is
+often a clinically relevant comparison. For variables with very skewed distributions, where those
+two percentiles are the same (eg, lots of zero drug doses), the points of comparison may be the
+maximum and minimum instead.
+
+```{r results_rbans}
+## -- Get tables of results for RBANS models -------------------------------------------------------
+## Combine results tables for each time point
+results.rbans <- map(models.rbans, .f = model.results,
+                     data.set = data.cog.3, print.format = 'plain', short.labels = lt.shortlabs) %>%
+  map(move.stats) %>%
+  map(ci.newline) %>%
+  map(ital.rows) %>%
+  reduce(full_join, by = c('label', 'low', 'high'))
+
+# save(results.rbans, file = 'exampledf.Rdata')
+
+names(results.rbans) <-
+  c('Covariate', 'Ref. (usu.\\\n25th %ile)', 'Comp. (usu.\\\n75th %ile)',
+    'Difference\\\n(95% CI),\\\n3 months', 'X^2^, 3m', 'df, 3m', 'P, 3m',
+    'Difference\\\n(95% CI),\\\n12 months', 'X^2^, 12m', 'df, 12m', 'P, 12m')
+
+```
+
+```{r print_results_rbans, results = 'asis'}
+pandoc.table(results.rbans,
+             justify = c('left', rep('right', ncol(results.rbans) - 1)),
+             split.cells = c(15, rep(Inf, ncol(results.rbans) - 1)),
+             split.table = Inf,
+             keep.line.breaks = TRUE)
+
+```
+
+```{r plots_rbans}
+## Get quantities to adjust each interacting variable to, using all patients with LT outcomes
+adjto.probs <- c(0, 0.25, 0.5, 0.75, 0.9)
+quants.hypodel.cog <-
+  unique(quantile(subset(all.oneobs, id %in% ltpts.either)$days.hypodel.imp, probs = adjto.probs))
+quants.hyperdel.cog <-
+  unique(quantile(subset(all.oneobs, id %in% ltpts.either)$days.hyperdel.imp, probs = adjto.probs))
+
+## -- Create data set of predicted vals/CIs for each subtype at various levels of the other --------
+
+## Functions to get results where hypoactive, hyperactive delirium is main exposure, adjusted to
+## different levels of the other
+get.hypo.predict.ols <- function(modobj){
+  as.data.frame(Predict(modobj, days.hypodel.imp, days.hyperdel.imp = quants.hyperdel.cog)) %>%
+  select(days.hypodel.imp, days.hyperdel.imp, yhat, lower, upper) %>%
+  mutate(outcome = modobj$scale.pred,
+         main.exposure = 'days.hypodel.imp',
+         int.var = 'days.hyperdel.imp',
+         xvar = days.hypodel.imp,
+         facetvar = days.hyperdel.imp)
+}
+
+get.hyper.predict.ols <- function(modobj){
+  as.data.frame(Predict(modobj, days.hyperdel.imp, days.hypodel.imp = quants.hypodel.cog)) %>%
+  select(days.hypodel.imp, days.hyperdel.imp, yhat, lower, upper) %>%
+  mutate(outcome = modobj$scale.pred,
+         main.exposure = 'days.hyperdel.imp',
+         int.var = 'days.hypodel.imp',
+         xvar = days.hyperdel.imp,
+         facetvar = days.hypodel.imp)
+}
+
+## Function to take a list of data frames and get them into plotting format:
+## columns = "Adjusted to days of ______ delirium = ____"
+## rows = "__ months"
+format.for.cog.plot <- function(df.list){
+  df.list %>%
+    bind_rows() %>%
+    separate(outcome, into = c('test', 'time'), sep = '\\.[t]*score\\.') %>%
+    mutate(time.f = factor(time, levels = c(3, 12), labels = c('3 Months', '12 Months')),
+           facetvar.f = factor(facetvar,
+                               labels = unique(paste(gsub(' of| delirium', '',
+                                                          label(data.cog.3[,int.var])),
+                                                     facetvar,
+                                                     sep = ' = '))))
+}
+
+predict.hypo.rbans <- map(models.rbans, get.hypo.predict.ols) %>% format.for.cog.plot()
+predict.hyper.rbans <- map(models.rbans, get.hyper.predict.ols) %>% format.for.cog.plot()
+
+hypo.rbans.plot <- ggplot(data = predict.hypo.rbans, aes(x = xvar, y = yhat)) +
+  facet_grid(time.f ~ facetvar.f) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), fill = nate.navy, alpha = 0.3) +
+  geom_line(colour = nate.navy) +
+  scale_x_continuous(name = 'Days of hypoactive delirium') +
+  scale_y_continuous(name = 'Adjusted RBANS Global Score') # +
+  # ggtitle('Days of hypoactive delirium vs global cognition')
+
+hyper.rbans.plot <- ggplot(data = predict.hyper.rbans, aes(x = xvar, y = yhat)) +
+  facet_grid(time.f ~ facetvar.f) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3, colour = nate.navy) +
+  scale_x_continuous(name = 'Days of hyperactive delirium') +
+  scale_y_continuous(name = 'Adjusted RBANS Global Score') # +
+  # ggtitle('Days of hyperactive delirium vs global cognition')
+
+```
+
+#### `r figure_nums('hypo_rbans')`
+```{r hypo_rbans_plot, results = 'asis'}
+hypo.rbans.plot
+
+```
+
+#### `r figure_nums('hyper_rbans')`
+```{r hyper_rbans_plot, results = 'asis'}
+hyper.rbans.plot
+
+```
