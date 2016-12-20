@@ -65,6 +65,8 @@ table_nums(name = 'results_death_12_all',
 table_nums(name = 'results_death_12_surv',
            caption = 'Motoric Subtypes and Other Covariates vs 12m Mortality among Hospital Survivors')
 table_nums(name = 'cognitive_missing', caption = 'Missingness for Cognitive Outcome Models')
+table_nums(name = 'results_rbans', caption = 'Motoric Subtypes and Other Covariates vs Global Cognition')
+table_nums(name = 'results_trailb', caption = 'Motoric Subtypes and Other Covariates vs Executive Function')
 
 figure_nums(name = 'zph_death_inhosp',
             caption = 'Proportional Hazard Assumption, In-Hospital Mortality among All Patients')
@@ -80,6 +82,8 @@ figure_nums(name = 'subtypehrs_death_12_surv',
             caption = 'Hazard Ratios (95% CIs) for Motoric Subtypes, 12m Mortality among Hospital Survivors')
 figure_nums(name = 'hypo_rbans', caption = 'Hypoactive Delirium vs Global Cognition')
 figure_nums(name = 'hyper_rbans', caption = 'Hyperactive Delirium vs Global Cognition')
+figure_nums(name = 'hypo_trailb', caption = 'Hypoactive Delirium vs Executive Function')
+figure_nums(name = 'hyper_trailb', caption = 'Hyperactive Delirium vs Executive Function')
 
 ```
 
@@ -1879,6 +1883,9 @@ rbans.arglist <- list(outcome = c('rbans.global.score.3', 'rbans.global.score.12
 
 models.rbans <- pmap(rbans.arglist, fmi.ols)
 
+# save(data.cog.3, data.cog.12, areg.cog.3, areg.cog.12, models.rbans, datadist.cog,
+#      file = 'shawn_moreexamples.Rdata')
+
 ```
 
 ## Overall Results
@@ -1918,6 +1925,7 @@ names(results.rbans) <-
 
 ```
 
+#### `r table_nums('results_rbans')`
 ```{r print_results_rbans, results = 'asis'}
 pandoc.table(results.rbans,
              justify = c('left', rep('right', ncol(results.rbans) - 1)),
@@ -2003,5 +2011,130 @@ hypo.rbans.plot
 #### `r figure_nums('hyper_rbans')`
 ```{r hyper_rbans_plot, results = 'asis'}
 hyper.rbans.plot
+
+```
+
+# Trailmaking B Scores (Executive Function)
+
+We wanted to explore whether durations of the two motoric delirium subtypes were associated with
+executive function among patients who were tested at 3 and 12 months after hospital discharge.
+
+## Model Choice and Covariates
+Based on extensive previous analyses using this outcome, we chose a linear regression model for both
+time points. All our covariates were either measured at baseline or are summary variables reflecting
+the entire ICU stay.
+
+* Primary exposures
+    * Days of hyperactive delirium during the hospitalization
+    * Days of hypoactive delirium during the hospitalization
+    * Interaction between days of hypoactive and hyperactive delirium
+* Baseline covariates
+    * Age at enrollment
+    * Years of education
+    * Charlson comorbidity index
+    * IQCODE
+* ICU/hospitalization covariates
+    * Days of severe sepsis
+    * Days of coma
+    * Mean daily modified SOFA (no CNS component, as this is better reflected by coma and delirium)
+    * Mean 24h dose in the ICU of the following medications, all cube root transformed:
+        * Benzodiazepines (midazolam equivalents)
+        * Opioids (fentanyl equivalents)
+        * Propofol
+        * Dexmedetomidine
+        * Haloperidol
+        
+All continuous covariates will be allowed to have a nonlinear association with hazard of death,
+using restricted cubic splines, if event rates and covariate distribution allows. (For example, there are so many zero doses of haloperidol and dexmedetomidine that it is not feasible to use
+splines for these variables.) Degrees of freedom for each covariate will be noted in the model
+results table.
+
+```{r model_trailb}
+## -- Fit Trails B models --------------------------------------------------------------------------
+## Argument list for Trails B models
+trailb.arglist <- list(outcome = c('trail.b.tscore.3', 'trail.b.tscore.12'),
+                       df = list(data.cog.3, data.cog.12),
+                       aregobj = list(areg.cog.3, areg.cog.12))
+
+models.trailb <- pmap(trailb.arglist, fmi.ols)
+
+```
+
+## Overall Results
+**General summary of motoric subtypes:** A longer duration of hypoactive delirium is significantly associated with worse executive function scores at both three and twelve months after hospital
+discharge; this association is nonlinear, so please see `r figure_nums('hypo_trailb', display = 'cite')` for the full effect. Duration of hyperactive delirium is not associated with executive
+function; it is impossible to know if there is a true effect which we can't see due to low amounts of hyperactive delirium, or whether there truly is no association. There is no significant interaction between the two motoric subtypes for this outcome.
+
+Results for all model covariates, adjusted to the median or mode of all other covariates, are
+presented in `r table_nums('results_trailb', display = 'cite')`; due to the presence of
+interaction terms, it is important to note that in the table, hypoactive delirium is adjusted to
+`r as.character(datadist.cog$limits['Adjust to', 'days.hypodel.imp'])` days and hyperactive delirium
+is adjusted to `r as.character(datadist.cog$limits['Adjust to', 'days.hyperdel.imp'])` days. `r figure_nums('hypo_trailb', display = 'cite')` and `r figure_nums('hyper_trailb', display = 'cite')` show the association of each motoric subtype and executive function, adjusted to various amounts of the other subtype.
+
+*Note on `r table_nums('results_trailb', display = 'cite')`*: For continuous covariates,
+differences in scores will be different depending on the points of comparison chosen, especially for
+covariates allowed to have a nonlinear relationship with the test score (indicated by df > 1).
+We have chosen to compare the 75th percentile and the 25th percentile by default, since this is
+often a clinically relevant comparison. For variables with very skewed distributions, where those
+two percentiles are the same (eg, lots of zero drug doses), the points of comparison may be the
+maximum and minimum instead.
+
+```{r results_trailb}
+## -- Get tables of results for Trails B models ----------------------------------------------------
+## Combine results tables for each time point
+results.trailb <- map(models.trailb, .f = model.results,
+                      data.set = data.cog.3,
+                      print.format = 'plain',
+                      short.labels = lt.shortlabs) %>%
+  map(move.stats) %>%
+  map(ci.newline) %>%
+  map(ital.rows) %>%
+  reduce(full_join, by = c('label', 'low', 'high'))
+
+names(results.trailb) <-
+  c('Covariate', 'Ref. (usu.\\\n25th %ile)', 'Comp. (usu.\\\n75th %ile)',
+    'Difference\\\n(95% CI),\\\n3 months', 'X^2^, 3m', 'df, 3m', 'P, 3m',
+    'Difference\\\n(95% CI),\\\n12 months', 'X^2^, 12m', 'df, 12m', 'P, 12m')
+
+```
+
+#### `r table_nums('results_trailb')`
+```{r print_results_trailb, results = 'asis'}
+pandoc.table(results.trailb,
+             justify = c('left', rep('right', ncol(results.trailb) - 1)),
+             split.cells = c(15, rep(Inf, ncol(results.trailb) - 1)),
+             split.table = Inf,
+             keep.line.breaks = TRUE)
+
+```
+
+```{r plots_trailb}
+## -- Create data set of predicted vals/CIs for each subtype at various levels of the other --------
+predict.hypo.trailb <- map(models.trailb, get.hypo.predict.ols) %>% format.for.cog.plot()
+predict.hyper.trailb <- map(models.trailb, get.hyper.predict.ols) %>% format.for.cog.plot()
+
+hypo.trailb.plot <- ggplot(data = predict.hypo.trailb, aes(x = xvar, y = yhat)) +
+  facet_grid(time.f ~ facetvar.f) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), fill = nate.navy, alpha = 0.3) +
+  geom_line(colour = nate.navy) +
+  scale_x_continuous(name = 'Days of hypoactive delirium') +
+  scale_y_continuous(name = 'Adjusted Trailmaking B T-Score')
+
+hyper.trailb.plot <- ggplot(data = predict.hyper.trailb, aes(x = xvar, y = yhat)) +
+  facet_grid(time.f ~ facetvar.f) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3, colour = nate.navy) +
+  scale_x_continuous(name = 'Days of hyperactive delirium') +
+  scale_y_continuous(name = 'Adjusted Trailmaking B T-Score')
+
+```
+
+#### `r figure_nums('hypo_trailb')`
+```{r hypo_trailb_plot, results = 'asis'}
+hypo.trailb.plot
+
+```
+#### `r figure_nums('hyper_trailb')`
+```{r hyper_trailb_plot, results = 'asis'}
+hyper.trailb.plot
 
 ```
