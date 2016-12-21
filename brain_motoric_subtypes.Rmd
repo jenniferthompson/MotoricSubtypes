@@ -64,6 +64,8 @@ table_nums(name = 'results_death_12_all',
            caption = 'Motoric Subtypes and Other Covariates vs 12m Mortality among All Patients')
 table_nums(name = 'results_death_12_surv',
            caption = 'Motoric Subtypes and Other Covariates vs 12m Mortality among Hospital Survivors')
+table_nums(name = 'results_dcloc',
+           caption = 'Motoric Subtypes and Other Covariates vs Discharge to Institution among Hospital Survivors')
 table_nums(name = 'cognitive_missing', caption = 'Missingness for Cognitive Outcome Models')
 table_nums(name = 'results_rbans', caption = 'Motoric Subtypes and Other Covariates vs Global Cognition')
 table_nums(name = 'results_trailb', caption = 'Motoric Subtypes and Other Covariates vs Executive Function')
@@ -80,6 +82,8 @@ figure_nums(name = 'zph_death_12_surv',
             caption = 'Proportional Hazard Assumption, 12m Mortality among Hospital Survivors')
 figure_nums(name = 'subtypehrs_death_12_surv',
             caption = 'Hazard Ratios (95% CIs) for Motoric Subtypes, 12m Mortality among Hospital Survivors')
+figure_nums(name = 'hypo_dcloc', caption = 'Hypoactive Delirium vs Discharge to Institution')
+figure_nums(name = 'hyper_dcloc', caption = 'Hyperactive Delirium vs Discharge to Institution')
 figure_nums(name = 'hypo_rbans', caption = 'Hypoactive Delirium vs Global Cognition')
 figure_nums(name = 'hyper_rbans', caption = 'Hyperactive Delirium vs Global Cognition')
 figure_nums(name = 'hypo_trailb', caption = 'Hypoactive Delirium vs Executive Function')
@@ -1743,6 +1747,176 @@ subtype.plot.death.12.surv %>%
   ggplotly(tooltips = c('y', 'ymin', 'ymax', 'x')) %>%
   layout(xaxis = list(title = 'Hazard Ratio (95% Confidence Interval)'),
          margin = list(b = 40))
+
+```
+
+# Discharge to Institution
+We examined the association of both motoric subtypes of delirium with the odds of discharge to an institution (anywhere other than home) among patients who survived their hospital stay: Given that
+the patient was well enough to be discharged alive, did the amounts of either/both delirium subtypes
+have any association with discharge to institution?
+
+## Model Choice and Covariates
+Our outcome is dichotomous (discharged to institution vs discharged home), and all our covariates
+were either measured at baseline or are summary variables reflecting the entire ICU stay. Therefore,
+we used a straightforward logistic regression model including the following covariates.
+
+* Primary exposures
+    * Days of hyperactive delirium during the hospitalization
+    * Days of hypoactive delirium during the hospitalization
+    * Interaction between days of hypoactive and hyperactive delirium
+* Baseline covariates
+    * Age at enrollment
+    * Years of education
+    * Charlson comorbidity index
+    * IQCODE
+* ICU/hospitalization covariates
+    * Days of severe sepsis
+    * Days of coma
+    * Mean daily modified SOFA (no CNS component, as this is better reflected by coma and delirium)
+    * Mean 24h dose in the ICU of the following medications, all cube root transformed:
+        * Benzodiazepines (midazolam equivalents)
+        * Opioids (fentanyl equivalents)
+        * Propofol
+        * Dexmedetomidine
+        * Haloperidol
+        
+All continuous covariates will be allowed to have a nonlinear association with hazard of death,
+using restricted cubic splines, if event rates and covariate distribution allows. (For example, there are so many zero doses of haloperidol and dexmedetomidine that it is not feasible to use
+splines for these variables.) Degrees of freedom for each covariate will be noted in the model
+results table.
+
+## Missingness
+Among the `r length(pts.survived)` hospital survivors eligible to be included in analysis,
+`r miss.surv`. This missingness occurred in `r pts.miss.surv` unique patients (`r round((pts.miss.surv / n.surv.inhosp)*100)`% of hospital survivors).
+
+Since there was so little missingness, we included only the `r n.surv.inhosp - pts.miss.surv` complete case records in this analysis.
+
+```{r dcloc_model}
+## Set datadist
+datadist.surv <- datadist(data.surv)
+options(datadist = 'datadist.surv')
+
+## Fit model
+model.dcloc <- lrm(dc.home ~ rcs(age.enroll, 3) + edu + iqcode.score.e +
+                     rcs(charlson.score, 3) + rcs(mean.modsofa.icu, 3) +
+                     rcs(mean.benz.cube, 3) + rcs(mean.op.cube, 3) +
+                     rcs(mean.prop.cube, 3) + mean.dex.cube + mean.hal.cube +
+                     rcs(coma.s.imp, 3) + rcs(days.hypodel.imp, 3)*days.hyperdel.imp,
+                   data = data.surv,
+                   x = TRUE, y = TRUE)
+
+```
+
+## Overall Model Results
+**General summary of motoric subtypes:** More hypoactive delirium during a hospitalization has a
+significant association with a higher likelihood of being discharged to an institution vs home.
+Hyperactive delirium, however, appears to have no meaningful relationship with institutionalization.
+There is no meaningful effect modification between the two subtypes.
+
+Results for all model covariates, adjusted to the median or mode of all other covariates, are
+presented in `r table_nums('results_dcloc', display = 'cite')`; due to the presence of
+interaction terms, it is important to note that in the table, hypoactive delirium is adjusted to
+`r as.character(datadist.surv$limits['Adjust to', 'days.hypodel.imp'])` days, and hyperactive delirium is adjusted to `r as.character(datadist.surv$limits['Adjust to', 'days.hyperdel.imp'])` days. More detailed hazard ratios for the two motoric subtypes are shown in `r figure_nums('hypo_dcloc', display = 'cite')` and `r figure_nums('hyper_dcloc', display = 'cite')`.
+
+*Note on `r table_nums('results_dcloc', display = 'cite')`*: For continuous covariates,
+hazard ratios will be different depending on the points of comparison chosen, especially for
+covariates allowed to have a nonlinear relationship with the hazard of death (indicated by df > 1).
+We have chosen to compare the 75th percentile and the 25th percentile by default, since this is
+often a clinically relevant comparison. For variables with very skewed distributions, where those
+two percentiles are the same (eg, lots of zero drug doses), the points of comparison may be the
+maximum and minimum instead.
+
+```{r dcloc_results}
+## Data frame of model results
+results.dcloc <- model.results(model.dcloc,
+                               data.set = data.surv,
+                               short.label = lt.shortlabs,
+                               print.format = 'plain',
+                               add.stats = c("Model L.R.", "R2")) %>%
+  ital.rows()
+
+names(results.dcloc) <- c('Covariate', 'Reference\n(usu. 25th %ile)',
+                          'Comparison\n(usu. 75th %ile)', 'Hazard ratio\n(95% CI)',
+                          'X^2^', 'df', 'P')
+
+```
+
+```{r dcloc_results_print, results = 'asis'}
+pandoc.table(results.dcloc,
+             justify = c('left', rep('right', ncol(results.dcloc) - 1)),
+             split.cells = c(30, rep(Inf, ncol(results.dcloc) - 1)),
+             split.tables = Inf, keep.line.breaks = TRUE)
+
+```
+
+```{r plots_dcloc}
+## -- Create data set of predicted vals/CIs for each subtype at various levels of the other --------
+
+## Functions to get results where hypoactive, hyperactive delirium is main exposure, adjusted to
+## different levels of the other
+get.hypo.predict.lrm <- function(modobj){
+  as.data.frame(Predict(modobj, days.hypodel.imp, days.hyperdel.imp = quants.hyperdel.surv,
+                        fun = plogis)) %>%
+  select(days.hypodel.imp, days.hyperdel.imp, yhat, lower, upper) %>%
+  mutate(outcome = all.vars(modobj$call)[1],
+         main.exposure = 'days.hypodel.imp',
+         int.var = 'days.hyperdel.imp',
+         xvar = days.hypodel.imp,
+         facetvar = days.hyperdel.imp)
+}
+
+get.hyper.predict.lrm <- function(modobj){
+  as.data.frame(Predict(modobj, days.hyperdel.imp, days.hypodel.imp = quants.hypodel.surv,
+                        fun = plogis)) %>%
+  select(days.hypodel.imp, days.hyperdel.imp, yhat, lower, upper) %>%
+  mutate(outcome = all.vars(modobj$call)[1],
+         main.exposure = 'days.hyperdel.imp',
+         int.var = 'days.hypodel.imp',
+         xvar = days.hyperdel.imp,
+         facetvar = days.hypodel.imp)
+}
+
+## Function to take a list of data frames and get them into plotting format:
+## columns = "Adjusted to days of ______ delirium = ____"
+## rows = "__ months"
+format.for.dcloc.plot <- function(df.list){
+  df.list %>%
+    bind_rows() %>%
+    mutate(facetvar.f = factor(facetvar,
+                               labels = unique(paste(gsub(' of| delirium', '',
+                                                          label(data.surv[,int.var])),
+                                                     facetvar,
+                                                     sep = ' = '))))
+}
+
+predict.hypo.dcloc <- get.hypo.predict.lrm(model.dcloc) %>% format.for.dcloc.plot()
+predict.hyper.dcloc <- get.hyper.predict.lrm(model.dcloc) %>% format.for.dcloc.plot()
+
+hypo.dcloc.plot <- ggplot(data = predict.hypo.dcloc, aes(x = xvar, y = yhat)) +
+  facet_wrap(~ facetvar.f, nrow = 1) +
+  geom_ribbon(aes(ymin = lower, ymax = upper), fill = nate.navy, alpha = 0.3) +
+  geom_line(colour = nate.navy) +
+  scale_x_continuous(name = 'Days of hypoactive delirium') +
+  scale_y_continuous(name = 'Adjusted probability of discharge to institution') +
+  theme(strip.text = element_text(size = 11))
+
+hyper.dcloc.plot <- ggplot(data = predict.hyper.dcloc, aes(x = xvar, y = yhat)) +
+  facet_wrap(~ facetvar.f, nrow = 1) +
+  geom_pointrange(aes(ymin = lower, ymax = upper), size = 0.3, colour = nate.navy) +
+  scale_x_continuous(name = 'Days of hyperactive delirium') +
+  scale_y_continuous(name = 'Adjusted probability of discharge to institution') +
+  theme(strip.text = element_text(size = 11))
+
+```
+
+#### `r figure_nums('hypo_dcloc')`
+```{r hypo_dcloc_plot, results = 'asis', fig.width=10}
+hypo.dcloc.plot
+
+```
+#### `r figure_nums('hyper_dcloc')`
+```{r hyper_dcloc_plot, results = 'asis', fig.width=10}
+hyper.dcloc.plot
 
 ```
 
