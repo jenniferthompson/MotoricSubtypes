@@ -1570,44 +1570,50 @@ results table.
 
 ```{r death_12_surv_datamgmt}
 ## -- Data management for 12-month mortality model including only survivors ------------------------
+## -- (Same data set will be used for discharge location model) ------------------------------------
 hosp.covars <- c('days.hyperdel.imp', 'days.hypodel.imp', 'icudays.sevseptic.s', 'coma.s.imp',
                  'mean.modsofa.icu', 'mean.benz.cube', 'mean.op.cube', 'mean.prop.cube',
                  'mean.dex.cube', 'mean.hal.cube')
 
-data.death.12.surv <- all.oneobs %>%
+data.surv <- all.oneobs %>%
   filter(id %in% pts.survived) %>%
-  select(id, died.ever.365, days.deathlast.365, one_of(base.covars), one_of(hosp.covars))
+  select(id, hospdis.loc, died.ever.365, days.deathlast.365,
+         one_of(base.covars), one_of(hosp.covars)) %>%
+  ## Create indicator for whether patient was discharged home vs institution
+  mutate(dc.home = factor(ifelse(is.na(hospdis.loc), NA,
+                          ifelse(hospdis.loc == 'Home', 0, 1)),
+                          levels = 0:1, labels = c('Discharged home', 'Discharged to facility')))
 
 ## -- Describe missingness -------------------------------------------------------------------------
-miss.death.12.surv <- map_chr(c(base.covars, hosp.covars), covars.missing,
-                              df = data.death.12.surv, covar.list = c(base.covars, hosp.covars)) %>%
+miss.surv <- map_chr(c(base.covars, hosp.covars), covars.missing,
+                     df = data.surv, covar.list = c(base.covars, hosp.covars)) %>%
   paste.covars.missing()
 
-pts.miss.death.12.surv <- sum(!complete.cases(data.death.12.surv))
+pts.miss.surv <- sum(!complete.cases(data.surv))
 
 ## -- Create string describing missingness among covariates in 12m-mortality model, all pts -------
-any.miss.death.12.surv <- !(miss.death.12.all == '')
-if(!any.miss.death.12.surv){
-  miss.death.12.surv <- 'there was no missingness in any covariates used in the model.'
+any.miss.surv <- !(miss.death.12.all == '')
+if(!any.miss.surv){
+  miss.surv <- 'there was no missingness in any covariates used in the model.'
 } else{
-  miss.death.12.surv <- paste('missingness among covariates was as follows:', miss.death.12.surv)
+  miss.surv <- paste('missingness among covariates was as follows:', miss.surv)
 }
 
 ```
 
 ### Missingness
-Among the `r length(pts.survived)` hospital survivors included in analysis, `r miss.death.12.surv`.
-This missingness occurred in `r pts.miss.death.12.surv` unique patients (`r round((pts.miss.death.12.surv / n.surv.inhosp)*100)`% of hospital survivors).
+Among the `r length(pts.survived)` hospital survivors eligible to be included in analysis,
+`r miss.surv`. This missingness occurred in `r pts.miss.surv` unique patients (`r round((pts.miss.surv / n.surv.inhosp)*100)`% of hospital survivors).
 
-Since there was so little missingness, we included only the `r n.surv.inhosp - pts.miss.death.12.surv` complete case records in this analysis.
+Since there was so little missingness, we included only the `r n.surv.inhosp - pts.miss.surv` complete case records in this analysis.
 
 ```{r death_12_surv_model}
 ## Set datadist
-datadist.death.12.surv <- datadist(data.death.12.surv)
-options(datadist = 'datadist.death.12.surv')
+datadist.surv <- datadist(data.surv)
+options(datadist = 'datadist.surv')
 
 ## Create Surv object for outcome
-Surv.death.12.surv <- with(data.death.12.surv, {
+Surv.death.12.surv <- with(data.surv, {
   Surv(time = days.deathlast.365, event = as.numeric(died.ever.365)) })
 
 ## Fit model
@@ -1616,7 +1622,7 @@ model.death.12.surv <- cph(Surv.death.12.surv ~ rcs(age.enroll, 3) + edu + iqcod
                              rcs(mean.benz.cube, 3) + rcs(mean.op.cube, 3) +
                              rcs(mean.prop.cube, 3) + mean.dex.cube + mean.hal.cube +
                              rcs(coma.s.imp, 3) + rcs(days.hypodel.imp, 3)*days.hyperdel.imp,
-                           data = data.death.12.surv,
+                           data = data.surv,
                            x = TRUE, y = TRUE)
 
 ```
@@ -1639,13 +1645,13 @@ par(mfrow = c(1, 1))
 ### Overall Model Results
 **General summary of motoric subtypes:** Having either motoric subtype of delirium on a given day
 seems to have no relationship with the hazard of death in the 12 months following study enrollment
-when looking at the cohort of `r n.surv.inhosp - pts.miss.death.12.surv` patients . There is no
+when looking at the cohort of `r n.surv.inhosp - pts.miss.surv` patients . There is no
 significant interaction between the two motoric subtypes for this outcome.
 
 Results for all model covariates, adjusted to the median or mode of all other covariates, are
 presented in `r table_nums('results_death_12_surv', display = 'cite')`; due to the presence of
 interaction terms, it is important to note that in the table, hypoactive delirium is adjusted to
-`r as.character(datadist.death.12.surv$limits['Adjust to', 'days.hypodel.imp'])` days, and hyperactive delirium is adjusted to `r as.character(datadist.death.12.surv$limits['Adjust to', 'days.hyperdel.imp'])` days. More detailed hazard ratios for the two motoric subtypes are shown in `r figure_nums('subtypehrs_death_12_surv', display = 'cite')`.
+`r as.character(datadist.surv$limits['Adjust to', 'days.hypodel.imp'])` days, and hyperactive delirium is adjusted to `r as.character(datadist.surv$limits['Adjust to', 'days.hyperdel.imp'])` days. More detailed hazard ratios for the two motoric subtypes are shown in `r figure_nums('subtypehrs_death_12_surv', display = 'cite')`.
 
 *Note on `r table_nums('results_death_12_surv', display = 'cite')`*: For continuous covariates,
 hazard ratios will be different depending on the points of comparison chosen, especially for
@@ -1661,7 +1667,7 @@ lt.shortlabs <- c('days.hypodel.imp' = 'Days hypoactive', 'days.hyperdel.imp' = 
 
 ## Data frame of model results
 results.death.12.surv <- model.results(model.death.12.surv,
-                                       data.set = data.death.12.surv,
+                                       data.set = data.surv,
                                        short.label = lt.shortlabs,
                                        print.format = 'plain',
                                        add.stats = c("Model L.R.", "R2")) %>%
@@ -1686,16 +1692,15 @@ pandoc.table(results.death.12.surv,
 ## -- Calculate HRs for each motoric subtype at each level of the other subtype --------------------
 ## Want to adjust to unique values of 0, 25th, 50th, 75th, 90th %iles
 adjto.probs <- c(0, 0.25, 0.5, 0.75, 0.90)
-quants.hypodel.surv <- unique(quantile(data.death.12.surv$days.hypodel.imp, probs = adjto.probs))
-quants.hyperdel.surv <- unique(quantile(data.death.12.surv$days.hyperdel.imp, probs = adjto.probs))
+quants.hypodel.surv <- unique(quantile(data.surv$days.hypodel.imp, probs = adjto.probs))
+quants.hyperdel.surv <- unique(quantile(data.surv$days.hyperdel.imp, probs = adjto.probs))
 
 ## Get datadist defaults for days of hypoactive and hyperactive delirium;
 ## if not explicitly specified, summary.rms() thinks days.hyperdel.imp is a factor...?
 ## Defaults for days.hyperdel.imp are min and max. Use 0 and 90th %ile instead.
-lowhigh.hypo.surv <- c(datadist.death.12.surv$limits['Low:effect', 'days.hypodel.imp'],
-                       datadist.death.12.surv$limits['High:effect', 'days.hypodel.imp'])
-lowhigh.hyper.surv <- c(0,
-                        quantile(data.death.12.surv$days.hyperdel.imp, probs = 0.9, na.rm = TRUE))
+lowhigh.hypo.surv <- c(datadist.surv$limits['Low:effect', 'days.hypodel.imp'],
+                       datadist.surv$limits['High:effect', 'days.hypodel.imp'])
+lowhigh.hyper.surv <- c(0, quantile(data.surv$days.hyperdel.imp, probs = 0.9, na.rm = TRUE))
 
 surv.hrs.arglist <- list(est.var = c(rep('days.hypodel.imp', length(quants.hyperdel.surv)),
                                      rep('days.hyperdel.imp', length(quants.hypodel.surv))),
@@ -1712,8 +1717,8 @@ hrs.death.12.surv <- pmap(surv.hrs.arglist,
                           model.obj = 'model.death.12.surv') %>%
   bind_rows() %>%
   mutate(var.main.label = paste(comp.level, 'vs.', ref.level,
-                                tools::toTitleCase(label(data.death.12.surv[,var.main]))),
-         var.int.label = label(data.death.12.surv[,var.int]),
+                                tools::toTitleCase(label(data.surv[,var.main]))),
+         var.int.label = label(data.surv[,var.int]),
          adjusted.to = factor(1:n(),
                               labels = paste(gsub(' delirium', '', gsub('of ', '', var.int.label)),
                                              adjust.int, sep = ' = ')))
@@ -2138,3 +2143,4 @@ hypo.trailb.plot
 hyper.trailb.plot
 
 ```
+
